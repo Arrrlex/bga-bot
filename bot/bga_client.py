@@ -40,24 +40,66 @@ class BGAClient:
 
         # Verify session or re-login
         page = await self._context.new_page()
-        await page.goto("https://boardgamearena.com/player")
-        if "/welcome" in page.url or "/account/account" in page.url:
-            logger.info("Session expired, logging in")
+        await page.goto("https://boardgamearena.com/player", wait_until="domcontentloaded", timeout=60000)
+        # BGA redirects to /account if not logged in
+        if "/account" in page.url:
+            logger.info("Session expired or not logged in, logging in")
             await self._login(page)
         else:
-            logger.info("Session valid")
+            logger.info("Session valid, URL: %s", page.url)
         await page.close()
 
     async def _login(self, page: Page):
-        """Login to BGA and save cookies."""
+        """Login to BGA via the multi-step Svelte login form.
+
+        Flow: /account -> fill email -> click Next -> fill password -> click Login
+        """
         username = os.environ["BGA_USERNAME"]
         password = os.environ["BGA_PASSWORD"]
 
-        await page.goto("https://boardgamearena.com/account")
-        await page.fill('input[name="username"], #username_input', username)
-        await page.fill('input[name="password"], #password_input', password)
-        await page.click('#submit_login_button, button[type="submit"]')
-        await page.wait_for_url("**/welcome**", timeout=15000)
+        # If we're already on the account page (redirected), just reload to ensure clean state
+        if "/account" not in page.url:
+            await page.goto("https://boardgamearena.com/account", wait_until="domcontentloaded", timeout=60000)
+        else:
+            # Already on account page from redirect, wait for JS to render
+            await page.wait_for_timeout(2000)
+
+        # Wait for the Svelte app to render the email input (may take a while on slow connections)
+        await page.wait_for_selector('input[placeholder="Email or username"]', timeout=60000)
+
+        # Dismiss cookie consent if present
+        try:
+            await page.click("#didomi-notice-agree-button", timeout=3000)
+            await page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+        # Step 1: Fill email and click Next
+        email_input = page.locator('input[placeholder="Email or username"]').first
+        await email_input.fill(username)
+        logger.info("Filled username")
+
+        next_btn = page.locator('a:text("Next")').first
+        await next_btn.click(force=True)
+        logger.info("Clicked Next")
+
+        # Step 2: Wait for password field and fill it
+        pw_input = page.locator('input[type="password"]')
+        await pw_input.wait_for(timeout=15000)
+        await pw_input.fill(password)
+        logger.info("Filled password")
+
+        # Step 3: Click Login
+        login_btn = page.locator('form:has(input[type="password"]) a:text("Login")')
+        await login_btn.click(force=True)
+        logger.info("Clicked Login")
+
+        # Wait for redirect to player page or welcome page
+        try:
+            await page.wait_for_url("**/player**", timeout=30000)
+        except Exception:
+            # May redirect to welcome or lobby
+            logger.info("Post-login URL: %s", page.url)
 
         # Save cookies
         cookies = await self._context.cookies()
@@ -75,33 +117,60 @@ class BGAClient:
         page = await self._context.new_page()
         try:
             # Navigate to the "play" page which lists current games
-            await page.goto("https://boardgamearena.com/player")
-            await page.wait_for_load_state("networkidle")
+            await page.goto("https://boardgamearena.com/player", wait_until="domcontentloaded", timeout=60000)
 
             # Use BGA's internal API to get current tables
-            # This calls the same endpoint the BGA frontend uses
+            # Try multiple known endpoints
             games = await page.evaluate("""
                 async () => {
-                    try {
-                        const resp = await fetch('/player/player/getGamesInProgress.html', {
-                            method: 'GET',
-                            credentials: 'include',
-                        });
-                        const data = await resp.json();
-                        if (data.status === '1' && data.data) {
-                            const tables = data.data;
-                            return Object.values(tables).map(t => ({
-                                game_id: String(t.id),
-                                game_type: t.game_name,
-                                url: `https://boardgamearena.com/${t.game_name}?table=${t.id}`,
-                                is_our_turn: t.is_my_turn || false,
-                                player_name: t.player_name || '',
-                            }));
+                    const endpoints = [
+                        '/player/player/getGamesInProgress.html',
+                        '/table/table/tableinfos.html',
+                    ];
+                    for (const ep of endpoints) {
+                        try {
+                            const resp = await fetch(ep, {
+                                method: 'GET',
+                                credentials: 'include',
+                            });
+                            const text = await resp.text();
+                            // Only parse if it looks like JSON
+                            if (!text.startsWith('{')) continue;
+                            const data = JSON.parse(text);
+                            if (data.data) {
+                                const tables = typeof data.data === 'object' ? Object.values(data.data) : [];
+                                if (tables.length > 0) {
+                                    return tables.map(t => ({
+                                        game_id: String(t.id || t.table_id || ''),
+                                        game_type: t.game_name || t.game_id || '',
+                                        url: 'https://boardgamearena.com/' + (t.game_name || t.game_id || '') + '?table=' + (t.id || t.table_id || ''),
+                                        is_our_turn: !!(t.is_my_turn || t.current_player_is_active),
+                                        player_name: t.player_name || t.players?.[Object.keys(t.players || {})[0]]?.fullname || '',
+                                    }));
+                                }
+                            }
+                        } catch (e) {
+                            // Try next endpoint
                         }
-                        return [];
-                    } catch (e) {
-                        return [];
                     }
+
+                    // Fallback: scrape game links from the page DOM
+                    const gameLinks = [];
+                    document.querySelectorAll('a[href*="/table="], a[href*="table="]').forEach(a => {
+                        const href = a.href;
+                        const tableMatch = href.match(/[?&]table=([0-9]+)/);
+                        const gameMatch = href.match(/boardgamearena[.]com[/]([a-z_]+)[?]/);
+                        if (tableMatch && gameMatch) {
+                            gameLinks.push({
+                                game_id: tableMatch[1],
+                                game_type: gameMatch[1],
+                                url: href,
+                                is_our_turn: false,
+                                player_name: '',
+                            });
+                        }
+                    });
+                    return gameLinks;
                 }
             """)
             return games
@@ -111,10 +180,9 @@ class BGAClient:
     async def navigate_to_game(self, url: str) -> Page:
         """Open a game page and wait for it to load."""
         page = await self._context.new_page()
-        await page.goto(url)
-        await page.wait_for_load_state("networkidle")
+        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
         # Wait for the game area to appear
-        await page.wait_for_selector("#overall-content, #game_play_area", timeout=30000)
+        await page.wait_for_selector("#overall-content, #game_play_area", timeout=60000)
         return page
 
     async def capture_screenshot(self, page: Page, path: str):
