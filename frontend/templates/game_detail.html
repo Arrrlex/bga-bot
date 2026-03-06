@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Game {{ game.id }} - BGA Bot{% endblock %}
+
+{% block content %}
+<h2>Game {{ game.id }} ({{ game.game_type }})</h2>
+<p>
+    Status: <strong>{{ game.status }}</strong> |
+    Player: {{ game.player_name }} |
+    <a href="{{ game.bga_url }}" target="_blank">Open on BGA</a>
+</p>
+
+<h3>Move History</h3>
+{% if moves %}
+<table>
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Move</th>
+            <th>Status</th>
+            <th>Screenshot</th>
+            <th>Reasoning</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for move in moves %}
+        <tr class="{% if not move.success %}move-failed{% endif %}">
+            <td>{{ move.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ move.move_executed }}</td>
+            <td>
+                {% if move.success %}
+                    <span class="badge badge-ok">OK</span>
+                {% else %}
+                    <span class="badge badge-error">Failed</span>
+                    {% if move.error_message %}
+                    <div class="error-msg">{{ move.error_message }}</div>
+                    {% endif %}
+                {% endif %}
+            </td>
+            <td>
+                {% if move.screenshot_path %}
+                <a href="/screenshots/{{ move.screenshot_path.replace('screenshots/', '') }}" target="_blank">
+                    <img src="/screenshots/{{ move.screenshot_path.replace('screenshots/', '') }}" class="thumbnail" alt="screenshot">
+                </a>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                <details>
+                    <summary>Show reasoning</summary>
+                    <pre class="reasoning">{{ move.llm_reasoning }}</pre>
+                </details>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No moves recorded yet.</p>
+{% endif %}
+{% endblock %}

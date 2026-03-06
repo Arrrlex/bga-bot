@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - BGA Bot{% endblock %}
+
+{% block content %}
+<h2>Active Games</h2>
+{% if active_games %}
+<table>
+    <thead>
+        <tr>
+            <th>Game</th>
+            <th>Type</th>
+            <th>Player</th>
+            <th>Last Checked</th>
+            <th>Last Move</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for game in active_games %}
+        {% set last_move = game_last_moves.get(game.id) %}
+        <tr class="{% if last_move and not last_move.success %}move-failed{% endif %}">
+            <td><a href="/game/{{ game.id }}">{{ game.id }}</a></td>
+            <td>{{ game.game_type }}</td>
+            <td>{{ game.player_name }}</td>
+            <td>{{ game.last_checked.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>
+                {% if last_move %}
+                    {{ last_move.move_executed }}
+                    <span class="time">{{ last_move.timestamp.strftime('%H:%M') }}</span>
+                {% else %}
+                    -
+                {% endif %}
+            </td>
+            <td>
+                {% if last_move and not last_move.success %}
+                    <span class="badge badge-error">Failed</span>
+                {% else %}
+                    <span class="badge badge-ok">OK</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No active games.</p>
+{% endif %}
+
+{% if unconfigured_games %}
+<h2>Unconfigured Games</h2>
+<p>These games have no plugin and will be skipped.</p>
+<table>
+    <thead>
+        <tr>
+            <th>Game ID</th>
+            <th>BGA Game Type</th>
+            <th>URL</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for game in unconfigured_games %}
+        <tr class="unconfigured">
+            <td>{{ game.id }}</td>
+            <td><code>{{ game.game_type }}</code></td>
+            <td><a href="{{ game.bga_url }}" target="_blank">Open on BGA</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% if finished_games %}
+<h2>Finished Games</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Game</th>
+            <th>Type</th>
+            <th>Player</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for game in finished_games %}
+        <tr>
+            <td><a href="/game/{{ game.id }}">{{ game.id }}</a></td>
+            <td>{{ game.game_type }}</td>
+            <td>{{ game.player_name }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}
