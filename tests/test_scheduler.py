@@ -1,0 +1,237 @@
+import json
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from sqlmodel import Session
+
+from bot.db import Game, Move, get_moves_for_game, upsert_game
+from bot.games.base import GameState, MoveResult
+from bot.scheduler import run_tick
+
+
+@pytest.fixture
+def mock_client():
+    client = AsyncMock()
+    client.get_active_games = AsyncMock(return_value=[])
+    client.navigate_to_game = AsyncMock()
+    client.capture_screenshot = AsyncMock()
+    return client
+
+
+@pytest.fixture
+def mock_llm():
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value='{"from": "a1", "to": "b2"}')
+    return llm
+
+
+@pytest.fixture
+def mock_page():
+    page = AsyncMock()
+    page.close = AsyncMock()
+    return page
+
+
+@pytest.mark.asyncio
+async def test_no_active_games(mock_client, mock_llm, session, tmp_path):
+    mock_client.get_active_games.return_value = []
+    await run_tick(mock_client, mock_llm, session, str(tmp_path))
+    # No errors, nothing to do
+
+
+@pytest.mark.asyncio
+async def test_unknown_game_type(mock_client, mock_llm, session, tmp_path):
+    mock_client.get_active_games.return_value = [
+        {
+            "game_id": "500",
+            "game_type": "unknown_game_xyz",
+            "url": "https://bga.com/unknown_game_xyz?table=500",
+            "is_our_turn": True,
+            "player_name": "me",
+        }
+    ]
+    await run_tick(mock_client, mock_llm, session, str(tmp_path))
+
+    game = session.get(Game, "500")
+    assert game is not None
+    assert game.status == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_not_our_turn(mock_client, mock_llm, session, mock_page, tmp_path):
+    mock_client.get_active_games.return_value = [
+        {
+            "game_id": "600",
+            "game_type": "checkers",
+            "url": "https://bga.com/checkers?table=600",
+            "is_our_turn": True,
+            "player_name": "me",
+        }
+    ]
+    mock_client.navigate_to_game.return_value = mock_page
+
+    with patch("bot.scheduler.REGISTRY") as mock_registry:
+        mock_plugin = MagicMock()
+        mock_plugin.return_value.is_our_turn = AsyncMock(return_value=False)
+        mock_registry.get.return_value = mock_plugin
+
+        await run_tick(mock_client, mock_llm, session, str(tmp_path))
+
+    # No move should be recorded
+    moves = get_moves_for_game(session, "600")
+    assert len(moves) == 0
+
+
+@pytest.mark.asyncio
+async def test_successful_turn(mock_client, mock_llm, session, mock_page, tmp_path):
+    mock_client.get_active_games.return_value = [
+        {
+            "game_id": "700",
+            "game_type": "checkers",
+            "url": "https://bga.com/checkers?table=700",
+            "is_our_turn": True,
+            "player_name": "me",
+        }
+    ]
+    mock_client.navigate_to_game.return_value = mock_page
+
+    mock_state = GameState(raw={"board": []}, summary="test board")
+    mock_result = MoveResult(move_description="a1 -> b2", success=True)
+
+    with patch("bot.scheduler.REGISTRY") as mock_registry:
+        mock_plugin_instance = MagicMock()
+        mock_plugin_instance.is_our_turn = AsyncMock(return_value=True)
+        mock_plugin_instance.extract_state = AsyncMock(return_value=mock_state)
+        mock_plugin_instance.build_prompt = MagicMock(return_value=("system", "user"))
+        mock_plugin_instance.execute_move = AsyncMock(return_value=mock_result)
+
+        mock_plugin_class = MagicMock(return_value=mock_plugin_instance)
+        mock_registry.get.return_value = mock_plugin_class
+
+        await run_tick(mock_client, mock_llm, session, str(tmp_path))
+
+    moves = get_moves_for_game(session, "700")
+    assert len(moves) == 1
+    move = moves[0]
+    assert move.success is True
+    assert move.move_executed == "a1 -> b2"
+    assert move.llm_reasoning == '{"from": "a1", "to": "b2"}'
+    assert "system" in move.llm_prompt
+    assert "user" in move.llm_prompt
+    assert move.screenshot_path is not None
+
+
+@pytest.mark.asyncio
+async def test_plugin_exception_records_failure(mock_client, mock_llm, session, mock_page, tmp_path):
+    mock_client.get_active_games.return_value = [
+        {
+            "game_id": "800",
+            "game_type": "checkers",
+            "url": "https://bga.com/checkers?table=800",
+            "is_our_turn": True,
+            "player_name": "me",
+        }
+    ]
+    mock_client.navigate_to_game.return_value = mock_page
+
+    with patch("bot.scheduler.REGISTRY") as mock_registry:
+        mock_plugin_instance = MagicMock()
+        mock_plugin_instance.is_our_turn = AsyncMock(return_value=True)
+        mock_plugin_instance.extract_state = AsyncMock(side_effect=RuntimeError("DOM parse error"))
+
+        mock_plugin_class = MagicMock(return_value=mock_plugin_instance)
+        mock_registry.get.return_value = mock_plugin_class
+
+        await run_tick(mock_client, mock_llm, session, str(tmp_path))
+
+    moves = get_moves_for_game(session, "800")
+    assert len(moves) == 1
+    assert moves[0].success is False
+
+
+@pytest.mark.asyncio
+async def test_failed_move_recorded(mock_client, mock_llm, session, mock_page, tmp_path):
+    mock_client.get_active_games.return_value = [
+        {
+            "game_id": "900",
+            "game_type": "checkers",
+            "url": "https://bga.com/checkers?table=900",
+            "is_our_turn": True,
+            "player_name": "me",
+        }
+    ]
+    mock_client.navigate_to_game.return_value = mock_page
+
+    mock_state = GameState(raw={"board": []}, summary="test")
+    mock_result = MoveResult(
+        move_description="bad move", success=False, error="Element not found"
+    )
+
+    with patch("bot.scheduler.REGISTRY") as mock_registry:
+        mock_plugin_instance = MagicMock()
+        mock_plugin_instance.is_our_turn = AsyncMock(return_value=True)
+        mock_plugin_instance.extract_state = AsyncMock(return_value=mock_state)
+        mock_plugin_instance.build_prompt = MagicMock(return_value=("sys", "usr"))
+        mock_plugin_instance.execute_move = AsyncMock(return_value=mock_result)
+
+        mock_plugin_class = MagicMock(return_value=mock_plugin_instance)
+        mock_registry.get.return_value = mock_plugin_class
+
+        await run_tick(mock_client, mock_llm, session, str(tmp_path))
+
+    moves = get_moves_for_game(session, "900")
+    assert len(moves) == 1
+    assert moves[0].success is False
+    assert moves[0].error_message == "Element not found"
+
+
+@pytest.mark.asyncio
+async def test_screenshot_captured_before_move(mock_client, mock_llm, session, mock_page, tmp_path):
+    """Screenshot should be captured before execute_move is called."""
+    call_order = []
+
+    mock_client.get_active_games.return_value = [
+        {
+            "game_id": "1000",
+            "game_type": "checkers",
+            "url": "https://bga.com/checkers?table=1000",
+            "is_our_turn": True,
+            "player_name": "me",
+        }
+    ]
+    mock_client.navigate_to_game.return_value = mock_page
+
+    async def track_screenshot(*args, **kwargs):
+        call_order.append("screenshot")
+
+    mock_client.capture_screenshot = AsyncMock(side_effect=track_screenshot)
+
+    mock_state = GameState(raw={}, summary="test")
+    mock_result = MoveResult(move_description="move", success=True)
+
+    with patch("bot.scheduler.REGISTRY") as mock_registry:
+        mock_plugin_instance = MagicMock()
+        mock_plugin_instance.is_our_turn = AsyncMock(return_value=True)
+        mock_plugin_instance.extract_state = AsyncMock(return_value=mock_state)
+        mock_plugin_instance.build_prompt = MagicMock(return_value=("s", "u"))
+
+        async def track_execute(*args, **kwargs):
+            call_order.append("execute")
+            return mock_result
+
+        mock_plugin_instance.execute_move = AsyncMock(side_effect=track_execute)
+
+        mock_plugin_class = MagicMock(return_value=mock_plugin_instance)
+        mock_registry.get.return_value = mock_plugin_class
+
+        await run_tick(mock_client, mock_llm, session, str(tmp_path))
+
+    assert call_order == ["screenshot", "execute"]
+
+
+@pytest.mark.asyncio
+async def test_get_active_games_failure(mock_client, mock_llm, session, tmp_path):
+    mock_client.get_active_games = AsyncMock(side_effect=RuntimeError("Connection failed"))
+    await run_tick(mock_client, mock_llm, session, str(tmp_path))
+    # Should not crash
