@@ -132,35 +132,51 @@ class ElGrandePlugin(GamePlugin):
             f"State: {raw.get('state_name', '')} | Actions: {raw.get('possible_actions', [])}",
         ]
 
+        # State-specific args (e.g. number of caballeros to place, allowed regions)
+        state_args = raw.get("state_args", {})
+        if state_args:
+            parts.append(f"State args: {json.dumps(state_args)}")
+
         # Player summary
         parts.append("\nPlayers:")
         for pid, p in raw.get("players", {}).items():
-            region_str = ", ".join(f"{r}:{c}" for r, c in p.get("regions", {}).items() if c > 0)
             parts.append(
                 f"  {p['name']} (#{p['color']}): score={p['score']}, "
                 f"court={p.get('court', 0)}, province={p.get('province', 0)}, "
                 f"castillo={p.get('castillo', 0)}, grande={p.get('grande', '')}"
             )
-            if region_str:
+            # Always show all regions, even if 0, so the model has full board info
+            regions = p.get("regions", {})
+            if regions:
+                region_str = ", ".join(f"{r}:{c}" for r, c in regions.items())
                 parts.append(f"    Regions: {region_str}")
 
         # Region scoring
         parts.append("\nRegion scores (1st/2nd/3rd):")
         for rId, r in raw.get("regions", {}).items():
-            parts.append(f"  {r['name']}: {r['score']}")
+            neighbours = r.get("neighbours", [])
+            neighbour_str = f" (neighbours: {', '.join(neighbours)})" if neighbours else ""
+            parts.append(f"  {r['name']}: {r['score']}{neighbour_str}")
 
-        # Power cards
+        # Power cards in hand
         if raw.get("hand"):
             parts.append("\nPower cards in hand:")
             for c in raw["hand"]:
                 parts.append(f"  Card {c['id']}: power={c['type']} (moves {c['caballeros_from_province']} from province)")
 
+        # Discarded power cards
+        if raw.get("hand_discarded"):
+            parts.append("\nDiscarded power cards:")
+            for c in raw["hand_discarded"]:
+                parts.append(f"  Card {c['id']}: power={c['type']}")
+
         # Action cards
         if raw.get("action_cards"):
-            parts.append("\nAction cards available:")
+            parts.append("\nAction cards this round:")
             for c in raw["action_cards"]:
-                taken = f" [TAKEN by {c['taken_by']}]" if c["taken_by"] else ""
-                parts.append(f"  {c['title']}: {c['description']}{taken}")
+                taken = f" [TAKEN by player {c['taken_by']}]" if c["taken_by"] else " [AVAILABLE]"
+                desc = f" - {c['description']}" if c["description"] else ""
+                parts.append(f"  Card {c['id']} \"{c['title']}\"{desc}{taken}")
 
         return GameState(raw=raw, summary="\n".join(parts))
 

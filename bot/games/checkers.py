@@ -77,19 +77,52 @@ class CheckersPlugin(GamePlugin):
 
         # Build a readable summary
         pieces = raw.get("pieces", {})
-        our_pieces = [p for p in pieces.values() if p["is_ours"]]
-        opp_pieces = [p for p in pieces.values() if not p["is_ours"]]
+        our_pieces = {pid: p for pid, p in pieces.items() if p["is_ours"]}
+        opp_pieces = {pid: p for pid, p in pieces.items() if not p["is_ours"]}
         valid_moves = raw.get("valid_moves", {})
+
+        # Determine our color and movement direction
+        our_color = next(iter(our_pieces.values()), {}).get("color", "?")
+        # In international draughts on BGA, white starts at bottom (high y) and moves
+        # toward low y; black starts at top (low y) and moves toward high y.
+        if our_color == "white":
+            direction = "moving UP (toward row 0, our home is rows 6-9)"
+        elif our_color == "black":
+            direction = "moving DOWN (toward row 9, our home is rows 0-3)"
+        else:
+            direction = "unknown"
+
+        # Player info
+        players = raw.get("players", {})
+        our_pid = raw.get("our_player_id", "")
 
         summary_parts = [
             f"Board: {raw.get('board_size', 10)}x{raw.get('board_size', 10)} International Draughts",
             f"Status: {raw.get('title', '')}",
-            f"Our pieces: {len(our_pieces)} | Opponent pieces: {len(opp_pieces)}",
-            f"Pieces that can move: {len(valid_moves)}",
+            f"We are {our_color}, {direction}",
         ]
 
+        # Player scores
+        for pid, p in players.items():
+            ours = " (us)" if pid == our_pid else ""
+            summary_parts.append(f"  {p['name']}{ours}: score={p['score']}")
+
+        # All our pieces
+        summary_parts.append(f"\nOur pieces ({len(our_pieces)}):")
+        for pid, p in sorted(our_pieces.items(), key=lambda x: (x[1]["y"], x[1]["x"])):
+            summary_parts.append(
+                f"  Piece {pid} ({p['type']}) at ({p['x']},{p['y']})"
+            )
+
+        # All opponent pieces
+        summary_parts.append(f"\nOpponent pieces ({len(opp_pieces)}):")
+        for pid, p in sorted(opp_pieces.items(), key=lambda x: (x[1]["y"], x[1]["x"])):
+            summary_parts.append(
+                f"  Piece {pid} ({p['type']}) at ({p['x']},{p['y']})"
+            )
+
         # List each valid move
-        summary_parts.append("\nValid moves:")
+        summary_parts.append(f"\nValid moves ({len(valid_moves)} pieces can move):")
         for piece_id, dests in valid_moves.items():
             p = pieces.get(piece_id, {})
             for d in dests:
