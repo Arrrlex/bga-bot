@@ -1,7 +1,24 @@
+import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from playwright.async_api import Page
+
+
+def extract_json(llm_response: str) -> dict:
+    """Extract a JSON object from an LLM response, ignoring reasoning blocks."""
+    text = llm_response.strip()
+    # Strip <reasoning>...</reasoning> block if present
+    text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL).strip()
+    # Strip markdown code fences
+    text = re.sub(r"```(?:json)?\s*", "", text).strip()
+    text = re.sub(r"```\s*$", "", text).strip()
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start == -1 or end == 0:
+        raise ValueError(f"No JSON object found in: {text[:200]}")
+    return json.loads(text[start:end])
 
 
 @dataclass

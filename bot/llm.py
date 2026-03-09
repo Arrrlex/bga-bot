@@ -33,7 +33,12 @@ class MoonshotProvider(LLMProvider):
             )
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            content = msg.get("content") or ""
+            reasoning = msg.get("reasoning_content") or ""
+            if reasoning:
+                return f"<reasoning>\n{reasoning}\n</reasoning>\n\n{content}"
+            return content
 
 
 class AnthropicProvider(LLMProvider):

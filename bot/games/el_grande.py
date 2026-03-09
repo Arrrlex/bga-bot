@@ -3,7 +3,7 @@ import logging
 
 from playwright.async_api import Page
 
-from .base import GamePlugin, GameState, MoveResult
+from .base import GamePlugin, GameState, MoveResult, extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -228,17 +228,7 @@ Respond with ONLY the JSON object."""
 
     async def execute_move(self, page: Page, llm_response: str) -> MoveResult:
         try:
-            response_text = llm_response.strip()
-            start = response_text.find("{")
-            end = response_text.rfind("}") + 1
-            if start == -1 or end == 0:
-                return MoveResult(
-                    move_description="Failed to parse move",
-                    success=False,
-                    error=f"No JSON found in LLM response: {response_text[:200]}",
-                )
-
-            move_data = json.loads(response_text[start:end])
+            move_data = extract_json(llm_response)
             state_name = await page.evaluate("() => gameui.gamedatas.gamestate.name")
 
             if "region" in move_data:
