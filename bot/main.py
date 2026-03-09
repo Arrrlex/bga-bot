@@ -34,18 +34,26 @@ async def main():
     logger.info("Starting BGA client...")
     await client.start()
 
-    interval = int(os.environ.get("POLL_INTERVAL_MINUTES", "5"))
+    interval_seconds = int(os.environ.get("POLL_INTERVAL_SECONDS", "0"))
+    interval_minutes = int(os.environ.get("POLL_INTERVAL_MINUTES", "5"))
+    if interval_seconds:
+        interval_kwargs = {"seconds": interval_seconds}
+        interval_desc = f"{interval_seconds}s"
+    else:
+        interval_kwargs = {"minutes": interval_minutes}
+        interval_desc = f"{interval_minutes}m"
+
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         run_tick,
         "interval",
-        minutes=interval,
+        **interval_kwargs,
         args=[client, llm, get_session(engine), data_dir],
         id="run_tick",
         max_instances=1,
     )
     scheduler.start()
-    logger.info("Scheduler started with %d minute interval", interval)
+    logger.info("Scheduler started with %s interval", interval_desc)
 
     # Run initial tick immediately
     try:
