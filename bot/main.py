@@ -1,10 +1,9 @@
-"""Entrypoint: starts scheduler + frontend in a single process."""
+"""Entrypoint: runs the bot scheduler (no frontend)."""
 
 import asyncio
 import logging
 import os
 
-import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
@@ -61,14 +60,14 @@ async def main():
     except Exception:
         logger.exception("Initial tick failed")
 
-    # Start FastAPI in the same event loop
-    # Import here to avoid circular imports
-    from frontend.app import create_app
-
-    app = create_app(engine)
-    config = uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
-    server = uvicorn.Server(config)
-    await server.serve()
+    # Keep the process alive
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Shutting down...")
+    finally:
+        await client.close()
 
 
 if __name__ == "__main__":

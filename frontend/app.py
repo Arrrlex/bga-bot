@@ -9,19 +9,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
-from bot.db import get_all_games, get_game, get_moves_for_game, get_session
+from bot.db import get_all_games, get_engine, get_game, get_moves_for_game, get_session
 
 security = HTTPBasic()
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
-_engine = None
-
 
 def create_app(engine=None) -> FastAPI:
-    global _engine
-    _engine = engine
+    if engine is None:
+        engine = get_engine()
 
     app = FastAPI(title="BGA Bot Dashboard")
 
@@ -29,8 +27,12 @@ def create_app(engine=None) -> FastAPI:
 
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+    refresh_seconds = int(os.environ.get("POLL_INTERVAL_SECONDS", "0"))
+    if not refresh_seconds:
+        refresh_seconds = int(os.environ.get("POLL_INTERVAL_MINUTES", "5")) * 60
+
     def get_db():
-        session = get_session(_engine)
+        session = get_session(engine)
         try:
             yield session
         finally:
@@ -59,7 +61,6 @@ def create_app(engine=None) -> FastAPI:
         unconfigured_games = [g for g in games if g.status == "unknown"]
         finished_games = [g for g in games if g.status == "finished"]
 
-        # Get last move for each game to check for failures
         game_last_moves: dict[str, object] = {}
         for g in games:
             moves = get_moves_for_game(session, g.id)
@@ -74,6 +75,7 @@ def create_app(engine=None) -> FastAPI:
                 "unconfigured_games": unconfigured_games,
                 "finished_games": finished_games,
                 "game_last_moves": game_last_moves,
+                "refresh_seconds": refresh_seconds,
             },
         )
 
@@ -96,6 +98,7 @@ def create_app(engine=None) -> FastAPI:
                 "request": request,
                 "game": game,
                 "moves": moves,
+                "refresh_seconds": refresh_seconds,
             },
         )
 

@@ -1,62 +1,58 @@
 {% extends "base.html" %}
 
-{% block title %}Game {{ game.id }} - BGA Bot{% endblock %}
+{% block title %}{{ game.game_type | title }} #{{ game.id }} - BGA Bot{% endblock %}
 
 {% block content %}
-<h2>Game {{ game.id }} ({{ game.game_type }})</h2>
-<p>
-    Status: <strong>{{ game.status }}</strong> |
-    Player: {{ game.player_name }} |
-    <a href="{{ game.bga_url }}" target="_blank">Open on BGA</a>
-</p>
+<section class="card">
+    <div class="game-header">
+        <h2>{{ game.game_type | title }} <span class="muted">#{{ game.id }}</span></h2>
+        <div class="game-meta">
+            <span class="badge {% if game.status == 'active' %}badge-ok{% else %}badge-neutral{% endif %}">{{ game.status }}</span>
+            {% if game.player_name %}<span>{{ game.player_name }}</span>{% endif %}
+            <a href="{{ game.bga_url }}" target="_blank">Open on BGA</a>
+        </div>
+    </div>
+</section>
 
-<h3>Move History</h3>
-{% if moves %}
-<table>
-    <thead>
-        <tr>
-            <th>Time</th>
-            <th>Move</th>
-            <th>Status</th>
-            <th>Screenshot</th>
-            <th>Reasoning</th>
-        </tr>
-    </thead>
-    <tbody>
+<section class="card">
+    <h3>Move History</h3>
+    {% if moves %}
+    <div class="moves">
         {% for move in moves %}
-        <tr class="{% if not move.success %}move-failed{% endif %}">
-            <td>{{ move.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-            <td>{{ move.move_executed }}</td>
-            <td>
+        <div class="move {% if not move.success %}move-error{% endif %}">
+            <div class="move-header">
+                <span class="move-time">{{ move.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</span>
                 {% if move.success %}
                     <span class="badge badge-ok">OK</span>
                 {% else %}
                     <span class="badge badge-error">Failed</span>
-                    {% if move.error_message %}
-                    <div class="error-msg">{{ move.error_message }}</div>
-                    {% endif %}
                 {% endif %}
-            </td>
-            <td>
-                {% if move.screenshot_path %}
+                <span class="move-desc">{{ move.move_executed }}</span>
+            </div>
+
+            {% if move.error_message %}
+            <div class="move-error-msg">{{ move.error_message }}</div>
+            {% endif %}
+
+            {% if move.screenshot_path %}
+            <div class="move-screenshot">
                 <a href="/screenshots/{{ move.screenshot_path.replace('screenshots/', '') }}" target="_blank">
-                    <img src="/screenshots/{{ move.screenshot_path.replace('screenshots/', '') }}" class="thumbnail" alt="screenshot">
+                    <img src="/screenshots/{{ move.screenshot_path.replace('screenshots/', '') }}" alt="screenshot">
                 </a>
-                {% else %}
-                -
-                {% endif %}
-            </td>
-            <td>
-                <details>
-                    <summary>Show reasoning</summary>
-                    <pre class="reasoning">{{ move.llm_reasoning }}</pre>
-                </details>
-            </td>
-        </tr>
+            </div>
+            {% endif %}
+
+            {% if move.llm_reasoning %}
+            <details class="move-reasoning">
+                <summary>Show reasoning</summary>
+                <pre>{{ move.llm_reasoning }}</pre>
+            </details>
+            {% endif %}
+        </div>
         {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<p>No moves recorded yet.</p>
-{% endif %}
+    </div>
+    {% else %}
+    <p class="empty">No moves recorded yet.</p>
+    {% endif %}
+</section>
 {% endblock %}
