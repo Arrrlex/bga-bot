@@ -112,65 +112,45 @@ class BGAClient:
         """Fetch list of active games from BGA.
 
         Returns list of dicts with keys: game_id, game_type, url, is_our_turn, player_name.
-        Uses BGA's table manager API endpoint.
+        Scrapes the gameinprogress page which lists all active turn-based games.
         """
         page = await self._context.new_page()
         try:
-            # Navigate to the "play" page which lists current games
-            await page.goto("https://boardgamearena.com/player", wait_until="domcontentloaded", timeout=60000)
+            await page.goto(
+                "https://boardgamearena.com/gameinprogress",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            # Wait for Svelte app to render game links
+            await page.wait_for_timeout(3000)
 
-            # Use BGA's internal API to get current tables
-            # Try multiple known endpoints
+            # Scrape game links from the Svelte-rendered list.
+            # Links look like: /12/checkers?table=802685178
+            # Text contains "It's your turn!" when it's our turn.
             games = await page.evaluate("""
-                async () => {
-                    const endpoints = [
-                        '/player/player/getGamesInProgress.html',
-                        '/table/table/tableinfos.html',
-                    ];
-                    for (const ep of endpoints) {
-                        try {
-                            const resp = await fetch(ep, {
-                                method: 'GET',
-                                credentials: 'include',
-                            });
-                            const text = await resp.text();
-                            // Only parse if it looks like JSON
-                            if (!text.startsWith('{')) continue;
-                            const data = JSON.parse(text);
-                            if (data.data) {
-                                const tables = typeof data.data === 'object' ? Object.values(data.data) : [];
-                                if (tables.length > 0) {
-                                    return tables.map(t => ({
-                                        game_id: String(t.id || t.table_id || ''),
-                                        game_type: t.game_name || t.game_id || '',
-                                        url: 'https://boardgamearena.com/' + (t.game_name || t.game_id || '') + '?table=' + (t.id || t.table_id || ''),
-                                        is_our_turn: !!(t.is_my_turn || t.current_player_is_active),
-                                        player_name: t.player_name || t.players?.[Object.keys(t.players || {})[0]]?.fullname || '',
-                                    }));
-                                }
-                            }
-                        } catch (e) {
-                            // Try next endpoint
-                        }
-                    }
-
-                    // Fallback: scrape game links from the page DOM
-                    const gameLinks = [];
-                    document.querySelectorAll('a[href*="/table="], a[href*="table="]').forEach(a => {
+                () => {
+                    const seen = new Set();
+                    const results = [];
+                    document.querySelectorAll('a[href*="table="]').forEach(a => {
                         const href = a.href;
                         const tableMatch = href.match(/[?&]table=([0-9]+)/);
-                        const gameMatch = href.match(/boardgamearena[.]com[/]([a-z_]+)[?]/);
+                        // URL format: /NUMBER/gamename?table=ID
+                        const gameMatch = href.match(/\\/\\d+\\/([a-z_]+)\\?table=/);
                         if (tableMatch && gameMatch) {
-                            gameLinks.push({
-                                game_id: tableMatch[1],
+                            const gameId = tableMatch[1];
+                            if (seen.has(gameId)) return;
+                            seen.add(gameId);
+                            const text = a.textContent || '';
+                            results.push({
+                                game_id: gameId,
                                 game_type: gameMatch[1],
                                 url: href,
-                                is_our_turn: false,
+                                is_our_turn: text.includes("your turn"),
                                 player_name: '',
                             });
                         }
                     });
-                    return gameLinks;
+                    return results;
                 }
             """)
             return games
@@ -183,6 +163,14 @@ class BGAClient:
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
         # Wait for the game area to appear
         await page.wait_for_selector("#overall-content, #game_play_area", timeout=60000)
+        # The title text loads asynchronously via JS — wait for it to populate
+        await page.wait_for_function(
+            """() => {
+                const el = document.querySelector('#pagemaintitletext');
+                return el && el.textContent.trim().length > 0;
+            }""",
+            timeout=30000,
+        )
         return page
 
     async def capture_screenshot(self, page: Page, path: str):
