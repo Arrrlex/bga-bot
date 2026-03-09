@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - BGA Bot{% endblock %}
+{% block meta_refresh %}{% endblock %}
+
+{% block content %}
+<section class="card">
+    <div class="game-header">
+        <h2>Live Logs</h2>
+        <label class="log-autoscroll">
+            <input type="checkbox" id="autoscroll" checked> Auto-scroll
+        </label>
+    </div>
+    <pre id="log-output" class="log-output">{% for line in lines %}{{ line }}
+{% endfor %}</pre>
+</section>
+
+<script>
+(function() {
+    const output = document.getElementById('log-output');
+    const checkbox = document.getElementById('autoscroll');
+
+    function scrollToBottom() {
+        if (checkbox.checked) {
+            output.scrollTop = output.scrollHeight;
+        }
+    }
+
+    scrollToBottom();
+
+    const evtSource = new EventSource('/logs/stream');
+    evtSource.onmessage = function(event) {
+        output.textContent += event.data + '\n';
+        scrollToBottom();
+    };
+    evtSource.onerror = function() {
+        // Reconnect is automatic with EventSource
+    };
+})();
+</script>
+{% endblock %}

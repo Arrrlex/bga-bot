@@ -16,6 +16,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
+from frontend.log_buffer import install as install_log_buffer
+install_log_buffer()
+
 from bot.bga_client import BGAClient
 from bot.db import get_engine, get_session
 from bot.llm import get_provider

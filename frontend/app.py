@@ -2,14 +2,18 @@ import os
 import secrets
 from pathlib import Path
 
+import asyncio
+
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
+from sse_starlette.sse import EventSourceResponse
 
 from bot.db import get_all_games, get_engine, get_game, get_moves_for_game, get_session
+from frontend.log_buffer import log_buffer
 
 security = HTTPBasic()
 
@@ -117,5 +121,43 @@ def create_app(engine=None) -> FastAPI:
         if not os.path.isfile(full_path):
             raise HTTPException(status_code=404, detail="Screenshot not found")
         return FileResponse(full_path)
+
+    @app.get("/logs", response_class=HTMLResponse)
+    async def logs_page(
+        request: Request,
+        _user: str = Depends(verify_password),
+    ):
+        lines = log_buffer.get_lines()
+        return templates.TemplateResponse(
+            "logs.html",
+            {
+                "request": request,
+                "lines": lines,
+                "refresh_seconds": refresh_seconds,
+            },
+        )
+
+    @app.get("/logs/stream")
+    async def logs_stream(
+        request: Request,
+        _user: str = Depends(verify_password),
+    ):
+        async def generate():
+            last_len = len(log_buffer.buffer)
+            while True:
+                await asyncio.sleep(1)
+                current_len = len(log_buffer.buffer)
+                if current_len > last_len:
+                    new_lines = list(log_buffer.buffer)[last_len:]
+                    for line in new_lines:
+                        yield {"data": line}
+                    last_len = current_len
+                elif current_len < last_len:
+                    # Buffer wrapped around
+                    for line in log_buffer.buffer:
+                        yield {"data": line}
+                    last_len = len(log_buffer.buffer)
+
+        return EventSourceResponse(generate())
 
     return app

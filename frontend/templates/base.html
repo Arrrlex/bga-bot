@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="{{ refresh_seconds }}">
+    {% block meta_refresh %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endblock %}
     <title>{% block title %}BGA Bot{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -11,7 +11,11 @@
     <nav>
         <div class="nav-inner">
             <a href="/" class="nav-brand">BGA Bot</a>
-            <span class="nav-meta">auto-refresh {{ refresh_seconds }}s</span>
+            <div class="nav-links">
+                <a href="/">Dashboard</a>
+                <a href="/logs">Logs</a>
+                <span class="nav-meta">auto-refresh {{ refresh_seconds }}s</span>
+            </div>
         </div>
     </nav>
     <main>

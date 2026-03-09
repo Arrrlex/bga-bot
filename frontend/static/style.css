@@ -247,6 +247,50 @@ tr.row-error {
     line-height: 1.5;
 }
 
+/* Nav links */
+.nav-links {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.nav-links a {
+    color: #8b949e;
+    font-size: 0.9rem;
+}
+
+.nav-links a:hover {
+    color: #f0f6fc;
+}
+
+/* Logs */
+.log-output {
+    background: #0d1117;
+    color: #c9d1d9;
+    padding: 1rem;
+    border-radius: 6px;
+    border: 1px solid #21262d;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 75vh;
+    overflow-y: auto;
+    margin-top: 0.75rem;
+}
+
+.log-autoscroll {
+    color: #8b949e;
+    font-size: 0.85rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+.log-autoscroll input {
+    margin-right: 0.3rem;
+}
+
 /* Utility */
 .muted {
     color: #484f58;
