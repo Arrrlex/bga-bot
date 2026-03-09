@@ -7,6 +7,11 @@ from .base import GamePlugin, GameState, MoveResult
 
 logger = logging.getLogger(__name__)
 
+REGION_NAMES = [
+    "castillo", "galicia", "paisvasco", "aragon", "cataluna",
+    "castilla_la_vieja", "castilla_la_nueva", "sevilla", "granada", "valencia",
+]
+
 
 class ElGrandePlugin(GamePlugin):
     game_id = "elgrande"
@@ -24,120 +29,200 @@ class ElGrandePlugin(GamePlugin):
     async def extract_state(self, page: Page) -> GameState:
         raw = await page.evaluate("""
             () => {
-                // Extract region caballero counts
-                const regions = {};
-                document.querySelectorAll('[id^="region_"], .region').forEach(r => {
-                    const id = r.id || r.className;
-                    const caballeros = r.querySelectorAll('.caballero, [class*="cube"]');
-                    const counts = {};
-                    caballeros.forEach(c => {
-                        const color = c.className.match(/color_(\\w+)/) ||
-                                     c.className.match(/(red|blue|green|yellow|purple)/);
-                        if (color) {
-                            const key = color[1];
-                            counts[key] = (counts[key] || 0) + 1;
+                const gd = gameui.gamedatas;
+                const gs = gd.gamestate;
+                const globals = gd.globals;
+
+                // Player info with caballero counts per region
+                const players = {};
+                for (const [pid, p] of Object.entries(gd.players)) {
+                    players[pid] = {
+                        name: p.name,
+                        color: p.color,
+                        score: p.score,
+                        court: p.court,
+                        province: p.province,
+                        castillo: p.castillo,
+                        grande: p.grande,
+                        regions: {},
+                    };
+                    // Region counts are stored directly on the player object
+                    const regionNames = [
+                        'galicia', 'paisvasco', 'aragon', 'cataluna',
+                        'castilla_la_vieja', 'castilla_la_nueva',
+                        'sevilla', 'granada', 'valencia',
+                    ];
+                    for (const r of regionNames) {
+                        if (p[r] !== undefined) {
+                            players[pid].regions[r] = parseInt(p[r]);
                         }
-                    });
-                    regions[id] = counts;
-                });
-
-                // Extract power cards in hand
-                const powerCards = [];
-                document.querySelectorAll('.powercard, .action_card, [id^="powercard_"]').forEach(c => {
-                    powerCards.push({
-                        id: c.id || '',
-                        text: c.textContent.trim().substring(0, 100),
-                        classes: c.className || '',
-                    });
-                });
-
-                // Extract scores
-                const scores = {};
-                document.querySelectorAll('.player-name').forEach(el => {
-                    const name = el.textContent.trim();
-                    const scoreEl = el.closest('.player_board_content, .player-board')
-                        ?.querySelector('.player_score, [id^="player_score_"]');
-                    if (scoreEl) scores[name] = scoreEl.textContent.trim();
-                });
-
-                // Extract castillo count
-                const castillo = document.querySelector('#castillo, .castillo, [id*="castillo"]');
-                let castilloCount = 0;
-                if (castillo) {
-                    castilloCount = castillo.querySelectorAll('.caballero, [class*="cube"]').length;
+                    }
                 }
 
-                // Current phase/action info
-                const titleEl = document.querySelector('#pagemaintitletext');
-                const title = titleEl ? titleEl.textContent : '';
+                // Region scoring info
+                const regions = {};
+                if (gd.regions) {
+                    for (const [rId, r] of Object.entries(gd.regions)) {
+                        regions[rId] = {
+                            name: r.name,
+                            score: r.score,
+                            neighbours: r.neighbours,
+                        };
+                    }
+                }
 
-                // Available actions
-                const actionButtons = [];
-                document.querySelectorAll('.action-button, [id^="button_"], .bgabutton').forEach(b => {
-                    if (b.offsetParent !== null) {  // visible
-                        actionButtons.push({
-                            id: b.id || '',
-                            text: b.textContent.trim(),
+                // Our power cards in hand
+                const hand = [];
+                if (gd.hand) {
+                    for (const [cId, c] of Object.entries(gd.hand)) {
+                        // Power card type maps to caballero count via powerCards table
+                        const pcValue = gd.powerCards?.[c.type];
+                        hand.push({
+                            id: cId,
+                            type: c.type,
+                            caballeros_from_province: pcValue !== undefined ? pcValue : '?',
                         });
                     }
-                });
+                }
+
+                // Discarded power cards
+                const discarded = [];
+                if (gd.hand_discard) {
+                    for (const [cId, c] of Object.entries(gd.hand_discard)) {
+                        discarded.push({id: cId, type: c.type});
+                    }
+                }
+
+                // Action cards on display
+                const actionCards = [];
+                if (gd.action) {
+                    for (const [aId, a] of Object.entries(gd.action)) {
+                        const cardDef = gd.actionCards?.[a.type] || {};
+                        actionCards.push({
+                            id: aId,
+                            type: a.type,
+                            title: cardDef.title || '',
+                            description: cardDef.description || '',
+                            taken_by: a.location_arg || null,
+                        });
+                    }
+                }
 
                 return {
+                    round: gd.round,
+                    king_region: globals?.king || '',
+                    state_name: gs.name,
+                    state_description: gs.descriptionmyturn || gs.description || '',
+                    possible_actions: gs.possibleactions || [],
+                    state_args: gs.args || {},
+                    players: players,
                     regions: regions,
-                    power_cards: powerCards,
-                    scores: scores,
-                    castillo_count: castilloCount,
-                    title: title,
-                    action_buttons: actionButtons,
+                    hand: hand,
+                    hand_discarded: discarded,
+                    action_cards: actionCards,
+                    title: document.querySelector('#pagemaintitletext')?.textContent?.trim() || '',
                 };
             }
         """)
 
-        summary_parts = [f"Phase: {raw.get('title', 'unknown')}"]
-        if raw.get("scores"):
-            summary_parts.append(f"Scores: {json.dumps(raw['scores'])}")
-        summary_parts.append(f"Regions with caballeros: {len(raw.get('regions', {}))}")
-        summary_parts.append(f"Power cards in hand: {len(raw.get('power_cards', []))}")
-        summary_parts.append(f"Castillo caballeros: {raw.get('castillo_count', 0)}")
-        if raw.get("action_buttons"):
-            buttons = [b["text"] for b in raw["action_buttons"]]
-            summary_parts.append(f"Available actions: {', '.join(buttons)}")
+        # Build readable summary
+        parts = [
+            f"Round: {raw.get('round', '?')} | King in: {raw.get('king_region', '?')}",
+            f"Phase: {raw.get('title', '')}",
+            f"State: {raw.get('state_name', '')} | Actions: {raw.get('possible_actions', [])}",
+        ]
 
-        return GameState(raw=raw, summary="\n".join(summary_parts))
+        # Player summary
+        parts.append("\nPlayers:")
+        for pid, p in raw.get("players", {}).items():
+            region_str = ", ".join(f"{r}:{c}" for r, c in p.get("regions", {}).items() if c > 0)
+            parts.append(
+                f"  {p['name']} (#{p['color']}): score={p['score']}, "
+                f"court={p.get('court', 0)}, province={p.get('province', 0)}, "
+                f"castillo={p.get('castillo', 0)}, grande={p.get('grande', '')}"
+            )
+            if region_str:
+                parts.append(f"    Regions: {region_str}")
+
+        # Region scoring
+        parts.append("\nRegion scores (1st/2nd/3rd):")
+        for rId, r in raw.get("regions", {}).items():
+            parts.append(f"  {r['name']}: {r['score']}")
+
+        # Power cards
+        if raw.get("hand"):
+            parts.append("\nPower cards in hand:")
+            for c in raw["hand"]:
+                parts.append(f"  Card {c['id']}: power={c['type']} (moves {c['caballeros_from_province']} from province)")
+
+        # Action cards
+        if raw.get("action_cards"):
+            parts.append("\nAction cards available:")
+            for c in raw["action_cards"]:
+                taken = f" [TAKEN by {c['taken_by']}]" if c["taken_by"] else ""
+                parts.append(f"  {c['title']}: {c['description']}{taken}")
+
+        return GameState(raw=raw, summary="\n".join(parts))
 
     def build_prompt(self, state: GameState) -> tuple[str, str]:
+        state_name = state.raw.get("state_name", "")
+        possible_actions = state.raw.get("possible_actions", [])
+
         system_prompt = """You are playing El Grande on BoardGameArena.
 
-Rules:
-- El Grande is an area-majority game set in medieval Spain
-- Each round: choose a power card (determines turn order and number of caballeros from province to court), then choose an action card
-- Action cards let you place caballeros from your court into regions and perform special actions
-- The Castillo (castle) is a secret region scored during scoring rounds
-- Scoring happens in rounds 3, 6, and 9: each region scores for 1st/2nd/3rd place majority
-- The King marks one region where no caballeros can be placed or removed
-- Grande (large piece) counts as a caballero for majority but cannot be moved
-- Goal: most points at end of 9 rounds
+El Grande is an area-majority game set in medieval Spain with 9 regions.
+- Each round: choose a power card (determines turn order + caballeros moved from province to court), then choose an action card
+- Action cards let you place caballeros from court into regions adjacent to the King, plus a special action
+- The Castillo is a secret region scored during scoring rounds (3, 6, 9)
+- When the Castillo scores, each player secretly picks a region to receive their castillo caballeros
+- The King marks a region where no caballeros can be placed or removed
+- Grande counts for majority but cannot be moved
 
-Strategy tips:
-- Diversify presence across regions rather than committing everything to one area
-- The Castillo is powerful for swinging scores during scoring rounds
-- Power cards with higher numbers give more caballeros but mean you act later
-- Watch opponents' court sizes and region commitments
+The 9 regions are: Galicia, Pais Vasco, Aragon, Cataluna, Castilla la Vieja, Castilla la Nueva, Sevilla, Granada, Valencia.
 
-Respond with your action in this exact JSON format:
-{"action": "<description>", "clicks": [{"selector": "<css_selector_or_id>"}]}
+Region IDs (for your response): galicia, paisvasco, aragon, cataluna, castilla_la_vieja, castilla_la_nueva, sevilla, granada, valencia, castillo
 
-The clicks array should contain the CSS selectors or element IDs to click in order.
-Be specific with selectors. If clicking a region, use the region's ID."""
+Strategy: Control high-value regions, use the Castillo strategically during scoring rounds, diversify presence.
 
-        user_prompt = f"""Current game state:
+IMPORTANT: Respond with ONLY a JSON object. The format depends on the current action required."""
+
+        # Customize instructions based on current state
+        if state_name == "chooseRegion":
+            action_prompt = """Current action: Choose a secret region for the Castillo scoring.
+Your castillo caballeros will be placed in the region you choose.
+Pick the region where the extra caballeros will give you the best majority advantage.
+
+Respond with: {"region": "<region_id>"}
+Example: {"region": "valencia"}"""
+        elif "powerCard" in state_name.lower() or "choosePowerCard" in possible_actions:
+            action_prompt = """Current action: Choose a power card.
+Higher power = more caballeros from province to court, but you act later.
+Lower power = fewer caballeros but you act first.
+
+Respond with: {"card_id": "<id>"}"""
+        elif "actionCard" in state_name.lower() or "chooseActionCard" in possible_actions:
+            action_prompt = """Current action: Choose an action card.
+Pick the card whose special action benefits you most.
+
+Respond with: {"card_id": "<id>"}"""
+        elif "placeCaballeros" in state_name.lower() or "placeCaballeros" in possible_actions:
+            action_prompt = """Current action: Place caballeros from your court into regions.
+You can place into regions adjacent to the King's region.
+
+Respond with: {"region": "<region_id>", "count": <number>}"""
+        else:
+            action_prompt = f"""Current action: {state.raw.get('title', 'unknown')}
+Possible actions: {possible_actions}
+
+Respond with the appropriate action as a JSON object.
+For clicking a region: {{"region": "<region_id>"}}
+For clicking a button/card: {{"click": "<element_description>"}}"""
+
+        user_prompt = f"""{action_prompt}
 
 {state.summary}
 
-Full state data:
-{json.dumps(state.raw, indent=2)}
-
-What is your move?"""
+Respond with ONLY the JSON object."""
 
         return system_prompt, user_prompt
 
@@ -154,35 +239,86 @@ What is your move?"""
                 )
 
             move_data = json.loads(response_text[start:end])
-            action_desc = move_data.get("action", "unknown action")
-            clicks = move_data.get("clicks", [])
+            state_name = await page.evaluate("() => gameui.gamedatas.gamestate.name")
 
-            for click in clicks:
-                selector = click.get("selector", "")
-                if not selector:
-                    continue
-
-                # Try as ID first, then as CSS selector
-                if not selector.startswith(("#", ".", "[")):
-                    selector = f"#{selector}"
-
-                el = await page.query_selector(selector)
-                if el:
-                    await el.click()
-                    await page.wait_for_timeout(500)
-                else:
+            if "region" in move_data:
+                region = move_data["region"]
+                # Click the SVG region path or the stock div
+                clicked = await page.evaluate(f"""
+                    () => {{
+                        // Try SVG path first (for region selection)
+                        const path = document.querySelector('#{region}');
+                        if (path) {{ path.dispatchEvent(new Event('click', {{bubbles: true}})); return 'svg'; }}
+                        // Try stock div
+                        const stock = document.querySelector('.stock.{region}, #stock_{region}');
+                        if (stock) {{ stock.click(); return 'stock'; }}
+                        return null;
+                    }}
+                """)
+                if not clicked:
                     return MoveResult(
-                        move_description=action_desc,
+                        move_description=f"Select region {region}",
                         success=False,
-                        error=f"Element not found: {selector}",
+                        error=f"Region element not found: {region}",
                     )
+                await page.wait_for_timeout(1000)
 
-            await page.wait_for_timeout(1000)
+                # For chooseRegion, we may need to confirm
+                try:
+                    confirm = await page.query_selector('#confirmRegionChoice, .bgabutton_blue:visible')
+                    if confirm:
+                        await confirm.click(force=True)
+                        await page.wait_for_timeout(500)
+                except Exception:
+                    pass
 
-            return MoveResult(
-                move_description=action_desc,
-                success=True,
-            )
+                return MoveResult(
+                    move_description=f"Selected region: {region}",
+                    success=True,
+                )
+
+            elif "card_id" in move_data:
+                card_id = move_data["card_id"]
+                # Click action or power card
+                selectors = [
+                    f"#actioncards_item_{card_id}",
+                    f"#powercards_item_{card_id}",
+                    f"[id$='_item_{card_id}']",
+                ]
+                for sel in selectors:
+                    el = await page.query_selector(sel)
+                    if el:
+                        await el.click(force=True)
+                        await page.wait_for_timeout(1000)
+                        return MoveResult(
+                            move_description=f"Selected card: {card_id}",
+                            success=True,
+                        )
+                return MoveResult(
+                    move_description=f"Select card {card_id}",
+                    success=False,
+                    error=f"Card element not found: {card_id}",
+                )
+
+            elif "count" in move_data:
+                region = move_data.get("region", "")
+                count = move_data.get("count", 1)
+                # Click region to place caballeros
+                for _ in range(count):
+                    await page.click(f"#{region}", force=True)
+                    await page.wait_for_timeout(300)
+                await page.wait_for_timeout(500)
+                return MoveResult(
+                    move_description=f"Placed {count} caballeros in {region}",
+                    success=True,
+                )
+
+            else:
+                return MoveResult(
+                    move_description="Unknown move format",
+                    success=False,
+                    error=f"Unrecognized move data: {move_data}",
+                )
 
         except json.JSONDecodeError as e:
             return MoveResult(

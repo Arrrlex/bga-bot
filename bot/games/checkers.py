@@ -24,88 +24,109 @@ class CheckersPlugin(GamePlugin):
     async def extract_state(self, page: Page) -> GameState:
         raw = await page.evaluate("""
             () => {
-                const board = [];
-                // BGA checkers uses an 8x8 grid with pieces as elements
-                const pieces = document.querySelectorAll('.checkers_piece, [id^="piece_"]');
-                pieces.forEach(p => {
-                    const style = p.getAttribute('style') || '';
-                    const classes = p.className || '';
-                    const id = p.id || '';
-                    board.push({
-                        id: id,
-                        classes: classes,
-                        style: style,
-                    });
-                });
+                const gd = gameui.gamedatas;
+                const gs = gd.gamestate;
+                const players = gd.players;
 
-                // Get available moves if highlighted
-                const highlights = document.querySelectorAll('.possibleMove, .possible_move, [class*="possible"]');
-                const possibleMoves = [];
-                highlights.forEach(h => {
-                    possibleMoves.push({
-                        id: h.id || '',
-                        classes: h.className || '',
-                    });
-                });
+                // Find our player ID
+                const ourId = gs.active_player ||
+                    (gs.multiactive && gs.multiactive[0]) || '';
 
-                // Get current player info
-                const titleEl = document.querySelector('#pagemaintitletext');
-                const title = titleEl ? titleEl.textContent : '';
+                // Build board: active pieces with positions
+                const pieces = {};
+                for (const [id, p] of Object.entries(gd.pieces)) {
+                    if (p.piece_captured === "1" || p.piece_removed === "1") continue;
+                    pieces[id] = {
+                        x: parseInt(p.piece_x),
+                        y: parseInt(p.piece_y),
+                        type: p.piece_type,
+                        color: p.piece_color,
+                        player_id: p.player_id,
+                        is_ours: p.player_id === ourId,
+                    };
+                }
 
-                // Get scores
-                const scores = {};
-                document.querySelectorAll('.player-name').forEach(el => {
-                    const name = el.textContent.trim();
-                    const scoreEl = el.closest('.player_board_content, .player-board')
-                        ?.querySelector('.player_score, [id^="player_score_"]');
-                    if (scoreEl) scores[name] = scoreEl.textContent.trim();
-                });
+                // Valid moves from gamestate args
+                const moves = {};
+                const destsByPiece = gs.args?.destinations_by_piece || {};
+                for (const [pieceId, dests] of Object.entries(destsByPiece)) {
+                    moves[pieceId] = dests.map(d => ({
+                        dest_x: d.dest_x,
+                        dest_y: d.dest_y,
+                        captures: (d.jumped_over || []).length > 0,
+                        successive: d.successive_cells || [],
+                    }));
+                }
+
+                // Player info
+                const playerInfo = {};
+                for (const [pid, p] of Object.entries(players)) {
+                    playerInfo[pid] = {name: p.name, score: p.score, color: p.color};
+                }
 
                 return {
-                    board: board,
-                    possible_moves: possibleMoves,
-                    title: title,
-                    scores: scores,
+                    board_size: gd.constants?.BOARD_SIZE || 10,
+                    pieces: pieces,
+                    valid_moves: moves,
+                    players: playerInfo,
+                    our_player_id: ourId,
+                    title: document.querySelector('#pagemaintitletext')?.textContent?.trim() || '',
                 };
             }
         """)
 
-        summary_parts = [f"Title: {raw.get('title', 'unknown')}"]
-        if raw.get("scores"):
-            summary_parts.append(f"Scores: {json.dumps(raw['scores'])}")
-        summary_parts.append(f"Pieces on board: {len(raw.get('board', []))}")
-        summary_parts.append(f"Possible moves highlighted: {len(raw.get('possible_moves', []))}")
+        # Build a readable summary
+        pieces = raw.get("pieces", {})
+        our_pieces = [p for p in pieces.values() if p["is_ours"]]
+        opp_pieces = [p for p in pieces.values() if not p["is_ours"]]
+        valid_moves = raw.get("valid_moves", {})
+
+        summary_parts = [
+            f"Board: {raw.get('board_size', 10)}x{raw.get('board_size', 10)} International Draughts",
+            f"Status: {raw.get('title', '')}",
+            f"Our pieces: {len(our_pieces)} | Opponent pieces: {len(opp_pieces)}",
+            f"Pieces that can move: {len(valid_moves)}",
+        ]
+
+        # List each valid move
+        summary_parts.append("\nValid moves:")
+        for piece_id, dests in valid_moves.items():
+            p = pieces.get(piece_id, {})
+            for d in dests:
+                capture_str = " (CAPTURE)" if d["captures"] else ""
+                summary_parts.append(
+                    f"  Piece {piece_id} ({p.get('type', '?')}) at ({p.get('x')},{p.get('y')}) "
+                    f"-> ({d['dest_x']},{d['dest_y']}){capture_str}"
+                )
 
         return GameState(raw=raw, summary="\n".join(summary_parts))
 
     def build_prompt(self, state: GameState) -> tuple[str, str]:
-        system_prompt = """You are playing Checkers (Draughts) on BoardGameArena.
+        system_prompt = """You are playing International Draughts (10x10 checkers) on BoardGameArena.
 
 Rules:
-- Standard 8x8 checkers on dark squares only
-- Regular pieces move diagonally forward one square
-- Kings (promoted pieces) can move diagonally forward or backward
-- Captures are mandatory: you must jump over opponent pieces when possible
+- 10x10 board, pieces on dark squares only
+- Regular pieces (men) move diagonally forward one square
+- Kings can move diagonally any number of squares in any direction
+- Captures are mandatory and you must jump over opponent pieces
 - Multi-jumps: if after a capture another capture is available, you must continue
 - A piece reaching the opposite back row is promoted to king
 - You win by capturing all opponent pieces or leaving them with no legal moves
 
-You will be given the current board state. Respond with your move in this exact JSON format:
-{"from": "<square_id>", "to": "<square_id>"}
+You will be given the board state with piece positions as (x, y) coordinates where x=column (0-9, left to right) and y=row (0-9, top to bottom).
 
-If multiple jumps are required, use:
-{"moves": [{"from": "<id>", "to": "<id>"}, {"from": "<id>", "to": "<id>"}]}
+You will also be given the list of ALL valid moves. You MUST pick one of these moves.
 
-Use the piece and square IDs from the board state. Pick the best strategic move available."""
+Respond with ONLY a JSON object in this exact format:
+{"piece_id": "<id>", "dest_x": <x>, "dest_y": <y>}
+
+Pick the strategically best move. Prefer captures, advancing toward promotion, and controlling the center."""
 
         user_prompt = f"""Current board state:
 
 {state.summary}
 
-Full board data:
-{json.dumps(state.raw, indent=2)}
-
-What is your move?"""
+Pick your move. Respond with ONLY the JSON object."""
 
         return system_prompt, user_prompt
 
@@ -113,7 +134,6 @@ What is your move?"""
         try:
             # Parse LLM response - extract JSON
             response_text = llm_response.strip()
-            # Find JSON in the response
             start = response_text.find("{")
             end = response_text.rfind("}") + 1
             if start == -1 or end == 0:
@@ -124,39 +144,43 @@ What is your move?"""
                 )
 
             move_data = json.loads(response_text[start:end])
+            piece_id = str(move_data["piece_id"])
+            dest_x = int(move_data["dest_x"])
+            dest_y = int(move_data["dest_y"])
 
-            if "moves" in move_data:
-                # Multi-jump
-                moves = move_data["moves"]
-            else:
-                moves = [move_data]
+            # Click the piece to select it
+            await page.click(f"#piece_{piece_id}", force=True)
+            await page.wait_for_timeout(800)
 
-            descriptions = []
-            for move in moves:
-                from_id = move["from"]
-                to_id = move["to"]
-
-                # Click the piece to select it
-                from_el = await page.query_selector(f"#{from_id}, [id='{from_id}']")
-                if from_el:
-                    await from_el.click()
-                    await page.wait_for_timeout(500)
-
-                # Click the destination
-                to_el = await page.query_selector(f"#{to_id}, [id='{to_id}']")
-                if to_el:
-                    await to_el.click()
-                    await page.wait_for_timeout(500)
-
-                descriptions.append(f"{from_id} -> {to_id}")
-
-            # Wait for move to be processed
+            # Click the destination cell
+            cell_id = f"cell_{dest_x}_{dest_y}"
+            await page.click(f"#{cell_id}", force=True)
             await page.wait_for_timeout(1000)
 
-            return MoveResult(
-                move_description=", ".join(descriptions),
-                success=True,
+            # Check if there's a successive jump needed
+            title = await page.evaluate(
+                "() => document.querySelector('#pagemaintitletext')?.textContent?.trim() || ''"
             )
+            if "must continue" in title.lower() or "must jump" in title.lower():
+                logger.info("Multi-jump detected, checking for successive moves")
+                # Get new valid destinations for the continuation
+                succ = await page.evaluate("""
+                    () => {
+                        const gs = gameui.gamedatas.gamestate;
+                        const dests = gs.args?.destinations_by_piece || {};
+                        return dests;
+                    }
+                """)
+                if succ:
+                    # Take the first available successive jump
+                    for pid, moves in succ.items():
+                        if moves:
+                            m = moves[0]
+                            await page.click(f"#cell_{m['dest_x']}_{m['dest_y']}", force=True)
+                            await page.wait_for_timeout(800)
+
+            desc = f"piece_{piece_id} ({dest_x},{dest_y})"
+            return MoveResult(move_description=desc, success=True)
 
         except json.JSONDecodeError as e:
             return MoveResult(

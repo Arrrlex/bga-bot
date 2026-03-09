@@ -158,7 +158,7 @@ class BGAClient:
             await page.close()
 
     async def navigate_to_game(self, url: str) -> Page:
-        """Open a game page and wait for it to load."""
+        """Open a game page and wait for it to fully load."""
         page = await self._context.new_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
         # Wait for the game area to appear
@@ -171,6 +171,16 @@ class BGAClient:
             }""",
             timeout=30000,
         )
+        # Wait for the loader overlay to disappear so clicks work
+        await page.wait_for_function(
+            """() => {
+                const m = document.querySelector('#loader_mask');
+                return !m || m.style.display === 'none' || m.offsetHeight === 0;
+            }""",
+            timeout=30000,
+        )
+        # Small extra wait for game JS to finish initializing
+        await page.wait_for_timeout(1000)
         return page
 
     async def capture_screenshot(self, page: Page, path: str):
