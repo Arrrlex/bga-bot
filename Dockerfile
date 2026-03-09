@@ -13,6 +13,4 @@ RUN uv sync --frozen --no-dev
 COPY . .
 RUN uv run playwright install chromium
 
-# SERVICE env var selects which process to run: "bot" or "frontend"
-ENV SERVICE=bot
-CMD uv run python -m $SERVICE
+CMD uv run python start.py
