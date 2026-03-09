@@ -12,10 +12,10 @@ class LLMProvider(ABC):
 class MoonshotProvider(LLMProvider):
     """Kimi k2.5 via Moonshot API."""
 
-    def __init__(self, api_key: str, model: str = "kimi-k2-5"):
+    def __init__(self, api_key: str, model: str = "kimi-k2.5"):
         self.api_key = api_key
         self.model = model
-        self.base_url = "https://api.moonshot.cn/v1"
+        self.base_url = "https://api.moonshot.ai/v1"
 
     async def complete(self, system: str, user: str) -> str:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -24,6 +24,7 @@ class MoonshotProvider(LLMProvider):
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 json={
                     "model": self.model,
+                    "max_tokens": 8192,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
@@ -98,7 +99,7 @@ def get_provider() -> LLMProvider:
 
     match provider_name:
         case "moonshot":
-            return MoonshotProvider(api_key, model or "kimi-k2-5")
+            return MoonshotProvider(api_key, model or "kimi-k2.5")
         case "anthropic":
             return AnthropicProvider(api_key, model or "claude-sonnet-4-20250514")
         case "openai":
