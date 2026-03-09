@@ -12,5 +12,3 @@ RUN uv sync --frozen --no-dev
 
 COPY . .
 RUN uv run playwright install chromium
-
-CMD ["uv", "run", "python", "start.py"]
