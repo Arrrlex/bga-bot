@@ -13,6 +13,7 @@ from bot.scheduler import run_tick
 @pytest.fixture
 def mock_client():
     client = AsyncMock()
+    client.accept_pending_invitations = AsyncMock(return_value=[])
     client.get_active_games = AsyncMock(return_value=[])
     client.navigate_to_game = AsyncMock()
     client.capture_screenshot = AsyncMock()
@@ -235,3 +236,35 @@ async def test_get_active_games_failure(mock_client, mock_llm, session, tmp_path
     mock_client.get_active_games = AsyncMock(side_effect=RuntimeError("Connection failed"))
     await run_tick(mock_client, mock_llm, session, str(tmp_path))
     # Should not crash
+
+
+@pytest.mark.asyncio
+async def test_invitations_accepted_before_games(mock_client, mock_llm, session, tmp_path):
+    """accept_pending_invitations should be called before get_active_games."""
+    call_order = []
+
+    async def track_invitations():
+        call_order.append("invitations")
+        return []
+
+    async def track_games():
+        call_order.append("games")
+        return []
+
+    mock_client.accept_pending_invitations = AsyncMock(side_effect=track_invitations)
+    mock_client.get_active_games = AsyncMock(side_effect=track_games)
+
+    await run_tick(mock_client, mock_llm, session, str(tmp_path))
+    assert call_order == ["invitations", "games"]
+
+
+@pytest.mark.asyncio
+async def test_invitation_failure_does_not_block_tick(mock_client, mock_llm, session, tmp_path):
+    """If accept_pending_invitations fails, the tick should still check active games."""
+    mock_client.accept_pending_invitations = AsyncMock(
+        side_effect=RuntimeError("Toast not found")
+    )
+    mock_client.get_active_games.return_value = []
+
+    await run_tick(mock_client, mock_llm, session, str(tmp_path))
+    mock_client.get_active_games.assert_awaited_once()
