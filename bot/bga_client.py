@@ -200,6 +200,7 @@ class BGAClient:
             # Scrape game links from the Svelte-rendered list.
             # Links look like: /12/checkers?table=802685178
             # Text contains "It's your turn!" when it's our turn.
+            # Player names appear as .text-bga-username spans inside the link.
             games = await page.evaluate("""
                 () => {
                     const seen = new Set();
@@ -214,12 +215,15 @@ class BGAClient:
                             if (seen.has(gameId)) return;
                             seen.add(gameId);
                             const text = a.textContent || '';
+                            const playerEls = a.querySelectorAll('.text-bga-username');
+                            const players = Array.from(playerEls).map(el => el.textContent.trim()).filter(Boolean);
                             results.push({
                                 game_id: gameId,
                                 game_type: gameMatch[1],
                                 url: href,
                                 is_our_turn: text.includes("your turn"),
                                 player_name: '',
+                                players: players.join(', '),
                             });
                         }
                     });
@@ -255,6 +259,53 @@ class BGAClient:
         # Small extra wait for game JS to finish initializing
         await page.wait_for_timeout(1000)
         return page
+
+    async def get_game_result(self, url: str) -> dict:
+        """Navigate to a game page and extract result info.
+
+        Returns dict with keys: finished (bool), winner (str), players (str).
+        """
+        page = await self._context.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_selector("#overall-content, #game_play_area", timeout=30000)
+            # Wait for gameui to initialize
+            try:
+                await page.wait_for_function(
+                    "() => typeof gameui !== 'undefined' && gameui.gamedatas",
+                    timeout=15000,
+                )
+            except Exception:
+                logger.warning("gameui not available for %s", url)
+                return {"finished": True, "winner": "", "players": ""}
+
+            await page.wait_for_timeout(2000)
+
+            result = await page.evaluate("""
+                () => {
+                    const gd = gameui.gamedatas;
+                    const stateName = gd.gamestate?.name || '';
+                    const players = {};
+                    let winner = '';
+                    const names = [];
+
+                    for (const [pid, p] of Object.entries(gd.players || {})) {
+                        names.push(p.name);
+                        if (p.gamerank === '1' || p.gamerank === 1 || p.is_winner === '1' || p.is_winner === 1) {
+                            winner = p.name;
+                        }
+                    }
+
+                    return {
+                        finished: stateName === 'gameEnd' || stateName === 'endGame',
+                        winner: winner,
+                        players: names.join(', '),
+                    };
+                }
+            """)
+            return result
+        finally:
+            await page.close()
 
     async def capture_screenshot(self, page: Page, path: str):
         """Capture a screenshot of the current page."""

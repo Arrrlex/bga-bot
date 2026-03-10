@@ -9,7 +9,9 @@ class Game(SQLModel, table=True):
     game_type: str
     bga_url: str
     status: str = "active"  # "active" | "finished" | "unknown"
-    player_name: str = ""
+    player_name: str = ""  # deprecated, use players
+    players: str = ""  # comma-separated list of player usernames
+    winner: str = ""  # username of winner, empty if draw or ongoing
     last_checked: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -38,7 +40,23 @@ def get_engine(db_url: str | None = None):
         db_url = f"sqlite:///{data_dir}/bga_bot.db"
     engine = create_engine(db_url)
     SQLModel.metadata.create_all(engine)
+    _migrate_add_columns(engine)
     return engine
+
+
+def _migrate_add_columns(engine):
+    """Add columns that may be missing from older databases."""
+    import sqlalchemy
+
+    with engine.connect() as conn:
+        inspector = sqlalchemy.inspect(engine)
+        game_columns = {c["name"] for c in inspector.get_columns("game")}
+        for col_name, col_default in [("players", "''"), ("winner", "''")]:
+            if col_name not in game_columns:
+                conn.execute(
+                    sqlalchemy.text(f"ALTER TABLE game ADD COLUMN {col_name} TEXT DEFAULT {col_default}")
+                )
+        conn.commit()
 
 
 def get_session(engine) -> Session:
@@ -54,12 +72,15 @@ def upsert_game(session: Session, game_info: dict) -> Game:
             game_type=game_info["game_type"],
             bga_url=game_info["url"],
             player_name=game_info.get("player_name", ""),
+            players=game_info.get("players", ""),
             status="active",
         )
         session.add(game)
     else:
         game.bga_url = game_info["url"]
         game.last_checked = datetime.now(timezone.utc)
+        if game_info.get("players"):
+            game.players = game_info["players"]
     session.commit()
     session.refresh(game)
     return game

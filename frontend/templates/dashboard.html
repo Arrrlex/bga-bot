@@ -12,7 +12,7 @@
             <tr>
                 <th>Game</th>
                 <th>Type</th>
-                <th>Player</th>
+                <th>Players</th>
                 <th>Last Checked</th>
                 <th>Last Move</th>
                 <th>Status</th>
@@ -24,7 +24,7 @@
             <tr class="{% if last_move and not last_move.success %}row-error{% endif %}">
                 <td><a href="/game/{{ game.id }}">#{{ game.id }}</a></td>
                 <td><span class="game-type">{{ game.game_type }}</span></td>
-                <td>{{ game.player_name or '-' }}</td>
+                <td>{{ game.players or '-' }}</td>
                 <td class="muted">{{ game.last_checked.strftime('%H:%M:%S') }}</td>
                 <td>
                     {% if last_move %}
@@ -89,7 +89,8 @@
             <tr>
                 <th>Game</th>
                 <th>Type</th>
-                <th>Player</th>
+                <th>Players</th>
+                <th>Winner</th>
             </tr>
         </thead>
         <tbody>
@@ -97,7 +98,8 @@
             <tr>
                 <td><a href="/game/{{ game.id }}">#{{ game.id }}</a></td>
                 <td><span class="game-type">{{ game.game_type }}</span></td>
-                <td>{{ game.player_name or '-' }}</td>
+                <td>{{ game.players or '-' }}</td>
+                <td>{{ game.winner or '-' }}</td>
             </tr>
             {% endfor %}
         </tbody>

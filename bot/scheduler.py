@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlmodel import Session
 
 from .bga_client import BGAClient
-from .db import Move, record_move, upsert_game
+from .db import Game, Move, get_all_games, record_move, upsert_game
 from .games import REGISTRY
 from .llm import LLMProvider
 
@@ -104,5 +104,25 @@ async def run_tick(client: BGAClient, llm: LLMProvider, session: Session, data_d
                 )
             except Exception:
                 logger.exception("Failed to record error move for game %s", game_id)
+
+    # Detect finished games: active in DB but not in BGA active list
+    active_ids = {g["game_id"] for g in active_games}
+    db_games = get_all_games(session)
+    for db_game in db_games:
+        if db_game.status == "active" and db_game.id not in active_ids:
+            logger.info("Game %s no longer active, checking result", db_game.id)
+            try:
+                result = await client.get_game_result(db_game.bga_url)
+                db_game.status = "finished"
+                if result.get("winner"):
+                    db_game.winner = result["winner"]
+                if result.get("players") and not db_game.players:
+                    db_game.players = result["players"]
+                session.commit()
+                logger.info("Game %s finished, winner: %s", db_game.id, db_game.winner or "unknown")
+            except Exception:
+                logger.exception("Failed to get result for game %s", db_game.id)
+                db_game.status = "finished"
+                session.commit()
 
     logger.info("Tick complete")

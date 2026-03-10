@@ -7,8 +7,9 @@
     <div class="game-header">
         <h2>{{ game.game_type | title }} <span class="muted">#{{ game.id }}</span></h2>
         <div class="game-meta">
-            <span class="badge {% if game.status == 'active' %}badge-ok{% else %}badge-neutral{% endif %}">{{ game.status }}</span>
-            {% if game.player_name %}<span>{{ game.player_name }}</span>{% endif %}
+            <span class="badge {% if game.status == 'active' %}badge-ok{% elif game.status == 'finished' %}badge-neutral{% else %}badge-error{% endif %}">{{ game.status }}</span>
+            {% if game.players %}<span>{{ game.players }}</span>{% endif %}
+            {% if game.winner %}<span class="badge badge-ok">Winner: {{ game.winner }}</span>{% endif %}
             <a href="{{ game.bga_url }}" target="_blank">Open on BGA</a>
         </div>
     </div>
