@@ -9,6 +9,7 @@ from .bga_client import BGAClient
 from .db import Game, Move, get_all_games, record_move, upsert_game
 from .games import REGISTRY
 from .llm import LLMProvider
+from frontend.tick_event import notify_tick
 
 logger = logging.getLogger(__name__)
 
@@ -140,3 +141,4 @@ async def run_tick(client: BGAClient, llm: LLMProvider, session: Session, data_d
                 session.commit()
 
     logger.info("Tick complete")
+    notify_tick()

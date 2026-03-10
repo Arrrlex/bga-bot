@@ -16,21 +16,26 @@ def plugin():
 def sample_state():
     return GameState(
         raw={
-            "regions": {
-                "region_1": {"red": 3, "blue": 2},
-                "region_2": {"red": 1, "green": 4},
+            "round": 3,
+            "king_region": "cataluna",
+            "state_name": "powerCard",
+            "state_description": "You must choose a power card",
+            "possible_actions": ["choosePowerCard"],
+            "state_args": {},
+            "players": {
+                "100": {
+                    "name": "Alice", "color": "ff0000", "score": "25",
+                    "court": "4", "province": "8", "castillo": "2", "grande": "galicia",
+                    "regions": {"galicia": 3, "valencia": 2},
+                },
             },
-            "power_cards": [
-                {"id": "powercard_1", "text": "Move 3 caballeros", "classes": "powercard"},
-            ],
-            "scores": {"Alice": "25", "Bob": "18"},
-            "castillo_count": 5,
+            "regions": {"1": {"name": "Galicia", "score": "4/2/1", "neighbours": ["paisvasco"]}},
+            "hand": [{"id": "42", "type": "6", "caballeros_from_province": 3}],
+            "hand_discarded": [],
+            "action_cards": [],
             "title": "You must choose a power card",
-            "action_buttons": [
-                {"id": "button_1", "text": "Select"},
-            ],
         },
-        summary="Phase: You must choose a power card\nScores: {}\nRegions: 2\nPower cards: 1",
+        summary="Round: 3 | King in: cataluna\nPhase: You must choose a power card\nState: powerCard | Actions: ['choosePowerCard']\n\nPlayers:\n  Alice (#ff0000): score=25, court=4, province=8, castillo=2, grande=galicia\n    Regions: galicia:3, valencia:2\n\nRegion scores (1st/2nd/3rd):\n  Galicia: 4/2/1 (neighbours: paisvasco)\n\nPower cards in hand:\n  Card 42: power=6 (moves 3 from province)",
     )
 
 
@@ -51,8 +56,8 @@ class TestBuildPrompt:
 
     def test_user_prompt_contains_state(self, plugin, sample_state):
         _, user = plugin.build_prompt(sample_state)
-        assert "power card" in user
-        assert "region_1" in user or "regions" in user
+        assert "power card" in user.lower()
+        assert "Round: 3" in user
 
     def test_prompts_are_nonempty(self, plugin, sample_state):
         system, user = plugin.build_prompt(sample_state)
@@ -80,40 +85,75 @@ class TestExtractState:
         page = AsyncMock()
         page.evaluate = AsyncMock(
             return_value={
-                "regions": {"r1": {"red": 2}},
-                "power_cards": [],
-                "scores": {"me": "10"},
-                "castillo_count": 3,
+                "round": 1,
+                "king_region": "galicia",
+                "state_name": "powerCard",
+                "state_description": "Choose a power card",
+                "possible_actions": ["choosePowerCard"],
+                "state_args": {},
+                "players": {
+                    "100": {
+                        "name": "me", "color": "ff0000", "score": "10",
+                        "court": "3", "province": "5", "castillo": "1", "grande": "aragon",
+                        "regions": {"aragon": 2},
+                    },
+                },
+                "regions": {"1": {"name": "Galicia", "score": "4/2/1", "neighbours": []}},
+                "hand": [],
+                "hand_discarded": [],
+                "action_cards": [],
                 "title": "Your turn",
-                "action_buttons": [],
             }
         )
         state = await plugin.extract_state(page)
         assert isinstance(state, GameState)
-        assert "r1" in state.raw["regions"]
+        assert state.raw["king_region"] == "galicia"
         assert len(state.summary) > 0
 
 
 class TestExecuteMove:
     @pytest.mark.asyncio
-    async def test_valid_move(self, plugin):
+    async def test_select_region(self, plugin):
+        page = AsyncMock()
+        page.evaluate = AsyncMock(return_value="svg")
+        page.wait_for_timeout = AsyncMock()
+        page.query_selector = AsyncMock(return_value=None)
+
+        llm_response = '{"region": "valencia"}'
+        result = await plugin.execute_move(page, llm_response)
+        assert result.success is True
+        assert "valencia" in result.move_description
+
+    @pytest.mark.asyncio
+    async def test_select_card(self, plugin):
         page = AsyncMock()
         el = AsyncMock()
         page.query_selector = AsyncMock(return_value=el)
         page.wait_for_timeout = AsyncMock()
 
-        llm_response = '{"action": "Select power card 5", "clicks": [{"selector": "powercard_5"}]}'
+        llm_response = '{"card_id": "42"}'
         result = await plugin.execute_move(page, llm_response)
         assert result.success is True
-        assert "power card" in result.move_description
+        assert "42" in result.move_description
 
     @pytest.mark.asyncio
-    async def test_element_not_found(self, plugin):
+    async def test_region_not_found(self, plugin):
+        page = AsyncMock()
+        page.evaluate = AsyncMock(return_value=None)
+        page.wait_for_timeout = AsyncMock()
+
+        llm_response = '{"region": "nonexistent"}'
+        result = await plugin.execute_move(page, llm_response)
+        assert result.success is False
+        assert "not found" in result.error
+
+    @pytest.mark.asyncio
+    async def test_card_not_found(self, plugin):
         page = AsyncMock()
         page.query_selector = AsyncMock(return_value=None)
         page.wait_for_timeout = AsyncMock()
 
-        llm_response = '{"action": "click missing", "clicks": [{"selector": "#missing"}]}'
+        llm_response = '{"card_id": "999"}'
         result = await plugin.execute_move(page, llm_response)
         assert result.success is False
         assert "not found" in result.error
@@ -133,34 +173,21 @@ class TestExecuteMove:
     @pytest.mark.asyncio
     async def test_playwright_error(self, plugin):
         page = AsyncMock()
-        page.query_selector = AsyncMock(side_effect=RuntimeError("Browser crashed"))
+        page.evaluate = AsyncMock(side_effect=RuntimeError("Browser crashed"))
 
-        llm_response = '{"action": "test", "clicks": [{"selector": "#btn"}]}'
+        llm_response = '{"region": "galicia"}'
         result = await plugin.execute_move(page, llm_response)
         assert result.success is False
         assert "Browser crashed" in result.error
 
     @pytest.mark.asyncio
-    async def test_multiple_clicks(self, plugin):
+    async def test_place_caballeros(self, plugin):
         page = AsyncMock()
-        el = AsyncMock()
-        page.query_selector = AsyncMock(return_value=el)
+        page.click = AsyncMock()
         page.wait_for_timeout = AsyncMock()
+        page.evaluate = AsyncMock(return_value="")
 
-        llm_response = '{"action": "multi-step", "clicks": [{"selector": "#a"}, {"selector": "#b"}]}'
+        llm_response = '{"count": 3}'
         result = await plugin.execute_move(page, llm_response)
         assert result.success is True
-        assert page.query_selector.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_selector_prefix_added(self, plugin):
-        """Bare IDs get # prefix added."""
-        page = AsyncMock()
-        el = AsyncMock()
-        page.query_selector = AsyncMock(return_value=el)
-        page.wait_for_timeout = AsyncMock()
-
-        llm_response = '{"action": "click", "clicks": [{"selector": "mybutton"}]}'
-        result = await plugin.execute_move(page, llm_response)
-        assert result.success is True
-        page.query_selector.assert_called_with("#mybutton")
+        assert "3" in result.move_description

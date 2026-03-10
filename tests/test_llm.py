@@ -84,7 +84,7 @@ class TestMoonshotProvider:
         with patch.object(httpx.AsyncClient, "__init__", _make_mock_client(transport)):
             await provider.complete("s", "u")
 
-        assert "moonshot.cn" in str(transport.last_request.url)
+        assert "moonshot.ai" in str(transport.last_request.url)
 
 
 class TestAnthropicProvider:
@@ -218,7 +218,7 @@ class TestGetProvider:
         monkeypatch.setenv("LLM_API_KEY", "test")
         monkeypatch.delenv("LLM_MODEL", raising=False)
         provider = get_provider()
-        assert provider.model == "kimi-k2-5"
+        assert provider.model == "kimi-k2.5"
 
     def test_missing_api_key(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "moonshot")

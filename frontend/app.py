@@ -14,6 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from bot.db import get_all_games, get_engine, get_game, get_moves_for_game, get_session
 from frontend.log_buffer import log_buffer
+from frontend.tick_event import wait_for_tick
 
 security = HTTPBasic()
 
@@ -157,6 +158,19 @@ def create_app(engine=None) -> FastAPI:
                     for line in log_buffer.buffer:
                         yield {"data": line}
                     last_len = len(log_buffer.buffer)
+
+        return EventSourceResponse(generate())
+
+    @app.get("/tick/stream")
+    async def tick_stream(
+        request: Request,
+        _user: str = Depends(verify_password),
+    ):
+        async def generate():
+            last_seen = 0
+            while True:
+                last_seen = await wait_for_tick(last_seen)
+                yield {"event": "tick", "data": str(last_seen)}
 
         return EventSourceResponse(generate())
 

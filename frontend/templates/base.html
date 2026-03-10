@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    {% block meta_refresh %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endblock %}
     <title>{% block title %}BGA Bot{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -14,12 +13,26 @@
             <div class="nav-links">
                 <a href="/">Dashboard</a>
                 <a href="/logs">Logs</a>
-                <span class="nav-meta">auto-refresh {{ refresh_seconds }}s</span>
+                <span class="nav-meta" id="refresh-status">live</span>
             </div>
         </div>
     </nav>
     <main>
         {% block content %}{% endblock %}
     </main>
+    <script>
+        (function() {
+            const status = document.getElementById('refresh-status');
+            const es = new EventSource('/tick/stream');
+            es.addEventListener('tick', function() {
+                location.reload();
+            });
+            es.onerror = function() {
+                status.textContent = 'disconnected';
+                // Fall back to polling if SSE fails
+                setTimeout(function() { location.reload(); }, {{ refresh_seconds }} * 1000);
+            };
+        })();
+    </script>
 </body>
 </html>

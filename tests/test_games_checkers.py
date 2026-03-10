@@ -16,17 +16,19 @@ def plugin():
 def sample_state():
     return GameState(
         raw={
-            "board": [
-                {"id": "piece_1", "classes": "checkers_piece white", "style": "top:0px;left:0px"},
-                {"id": "piece_2", "classes": "checkers_piece black", "style": "top:100px;left:100px"},
-            ],
-            "possible_moves": [
-                {"id": "square_10", "classes": "possibleMove"},
-            ],
-            "title": "You must play",
-            "scores": {"player1": "2", "player2": "1"},
+            "board_size": 10,
+            "pieces": {
+                "1": {"x": 2, "y": 7, "type": "man", "color": "white", "player_id": "100", "is_ours": True},
+                "2": {"x": 3, "y": 2, "type": "man", "color": "black", "player_id": "200", "is_ours": False},
+            },
+            "valid_moves": {
+                "1": [{"dest_x": 3, "dest_y": 6, "captures": False, "successive": []}],
+            },
+            "players": {"100": {"name": "us", "score": "0", "color": "ffffff"}, "200": {"name": "them", "score": "0", "color": "000000"}},
+            "our_player_id": "100",
+            "title": "You must select a piece",
         },
-        summary="Title: You must play\nScores: {}\nPieces on board: 2\nPossible moves highlighted: 1",
+        summary="Board: 10x10 International Draughts\nStatus: You must select a piece\nWe are white, moving UP (toward row 0, our home is rows 6-9)\n\nOur pieces (1):\n  Piece 1 (man) at (2,7)\n\nOpponent pieces (1):\n  Piece 2 (man) at (3,2)\n\nValid moves (1 pieces can move):\n  Piece 1 (man) at (2,7) -> (3,6)",
     )
 
 
@@ -47,8 +49,8 @@ class TestBuildPrompt:
 
     def test_user_prompt_contains_board_state(self, plugin, sample_state):
         _, user = plugin.build_prompt(sample_state)
-        assert "You must play" in user
-        assert "piece_1" in user or "board" in user
+        assert "You must select a piece" in user
+        assert "Piece 1" in user
 
     def test_prompts_are_nonempty(self, plugin, sample_state):
         system, user = plugin.build_prompt(sample_state)
@@ -76,15 +78,19 @@ class TestExtractState:
         page = AsyncMock()
         page.evaluate = AsyncMock(
             return_value={
-                "board": [{"id": "p1", "classes": "piece", "style": ""}],
-                "possible_moves": [],
+                "board_size": 10,
+                "pieces": {
+                    "1": {"x": 0, "y": 7, "type": "man", "color": "white", "player_id": "100", "is_ours": True},
+                },
+                "valid_moves": {},
+                "players": {"100": {"name": "us", "score": "0", "color": "ffffff"}},
+                "our_player_id": "100",
                 "title": "Your turn",
-                "scores": {"me": "3"},
             }
         )
         state = await plugin.extract_state(page)
         assert isinstance(state, GameState)
-        assert state.raw["board"]
+        assert "1" in state.raw["pieces"]
         assert len(state.summary) > 0
 
 
@@ -92,28 +98,31 @@ class TestExecuteMove:
     @pytest.mark.asyncio
     async def test_valid_move(self, plugin):
         page = AsyncMock()
-        from_el = AsyncMock()
-        to_el = AsyncMock()
-        page.query_selector = AsyncMock(side_effect=[from_el, to_el])
+        page.click = AsyncMock()
         page.wait_for_timeout = AsyncMock()
+        page.evaluate = AsyncMock(return_value="Waiting for opponent")
 
-        llm_response = '{"from": "piece_1", "to": "square_10"}'
+        llm_response = '{"piece_id": "1", "dest_x": 3, "dest_y": 6}'
         result = await plugin.execute_move(page, llm_response)
         assert result.success is True
         assert "piece_1" in result.move_description
-        assert "square_10" in result.move_description
 
     @pytest.mark.asyncio
     async def test_multi_jump(self, plugin):
         page = AsyncMock()
-        elements = [AsyncMock() for _ in range(4)]
-        page.query_selector = AsyncMock(side_effect=elements)
+        page.click = AsyncMock()
         page.wait_for_timeout = AsyncMock()
+        # First evaluate returns "must continue", second returns successive moves
+        page.evaluate = AsyncMock(
+            side_effect=[
+                "You must continue jumping",
+                {"1": [{"dest_x": 5, "dest_y": 4}]},
+            ]
+        )
 
-        llm_response = '{"moves": [{"from": "p1", "to": "s1"}, {"from": "s1", "to": "s2"}]}'
+        llm_response = '{"piece_id": "1", "dest_x": 3, "dest_y": 6}'
         result = await plugin.execute_move(page, llm_response)
         assert result.success is True
-        assert "p1" in result.move_description
 
     @pytest.mark.asyncio
     async def test_no_json_in_response(self, plugin):
@@ -125,15 +134,16 @@ class TestExecuteMove:
     @pytest.mark.asyncio
     async def test_invalid_json(self, plugin):
         page = AsyncMock()
-        result = await plugin.execute_move(page, '{"from": broken}')
+        result = await plugin.execute_move(page, '{"piece_id": broken}')
         assert result.success is False
 
     @pytest.mark.asyncio
     async def test_playwright_error(self, plugin):
         page = AsyncMock()
-        page.query_selector = AsyncMock(side_effect=RuntimeError("Timeout"))
+        page.click = AsyncMock(side_effect=RuntimeError("Timeout"))
+        page.wait_for_timeout = AsyncMock()
 
-        llm_response = '{"from": "p1", "to": "s1"}'
+        llm_response = '{"piece_id": "1", "dest_x": 3, "dest_y": 6}'
         result = await plugin.execute_move(page, llm_response)
         assert result.success is False
         assert "Timeout" in result.error
