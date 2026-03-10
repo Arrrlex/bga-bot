@@ -18,7 +18,7 @@ class MoonshotProvider(LLMProvider):
         self.base_url = "https://api.moonshot.ai/v1"
 
     async def complete(self, system: str, user: str) -> str:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self.api_key}"},
@@ -50,7 +50,7 @@ class AnthropicProvider(LLMProvider):
         self.base_url = "https://api.anthropic.com/v1"
 
     async def complete(self, system: str, user: str) -> str:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
                 f"{self.base_url}/messages",
                 headers={
@@ -79,7 +79,7 @@ class OpenAIProvider(LLMProvider):
         self.base_url = base_url or "https://api.openai.com/v1"
 
     async def complete(self, system: str, user: str) -> str:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self.api_key}"},
