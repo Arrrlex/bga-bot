@@ -1,5 +1,9 @@
 [build]
 builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[build.cache]
+enabled = true
 
 [deploy]
 restartPolicyType = "on_failure"
