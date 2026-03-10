@@ -63,13 +63,7 @@ async def main():
     scheduler.start()
     logger.info("Scheduler started with %s interval", interval_desc)
 
-    # Run initial tick
-    try:
-        await run_tick(client, llm, get_session(engine), data_dir)
-    except Exception:
-        logger.exception("Initial tick failed")
-
-    # Start frontend
+    # Start frontend (scheduler handles first tick in the background)
     app = create_app(engine)
     config = uvicorn.Config(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
     server = uvicorn.Server(config)
