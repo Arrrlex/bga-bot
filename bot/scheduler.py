@@ -55,6 +55,20 @@ async def run_tick(client: BGAClient, llm: LLMProvider, session: Session, data_d
             page = await client.navigate_to_game(game_info["url"])
 
             try:
+                # Extract player names from gameui (authoritative source)
+                if not db_game.players:
+                    players = await page.evaluate("""
+                        () => {
+                            try {
+                                return Object.values(gameui.gamedatas.players)
+                                    .map(p => p.name).join(', ');
+                            } catch(e) { return ''; }
+                        }
+                    """)
+                    if players:
+                        db_game.players = players
+                        session.commit()
+
                 if not await plugin.is_our_turn(page):
                     logger.info("Not our turn in game %s", game_id)
                     continue

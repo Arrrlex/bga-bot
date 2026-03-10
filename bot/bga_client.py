@@ -200,7 +200,7 @@ class BGAClient:
             # Scrape game links from the Svelte-rendered list.
             # Links look like: /12/checkers?table=802685178
             # Text contains "It's your turn!" when it's our turn.
-            # Player names appear as .text-bga-username spans inside the link.
+            # Player names are extracted from gameui later in the scheduler.
             games = await page.evaluate("""
                 () => {
                     const seen = new Set();
@@ -215,15 +215,12 @@ class BGAClient:
                             if (seen.has(gameId)) return;
                             seen.add(gameId);
                             const text = a.textContent || '';
-                            const playerEls = a.querySelectorAll('.text-bga-username');
-                            const players = Array.from(playerEls).map(el => el.textContent.trim()).filter(Boolean);
                             results.push({
                                 game_id: gameId,
                                 game_type: gameMatch[1],
                                 url: href,
                                 is_our_turn: text.includes("your turn"),
                                 player_name: '',
-                                players: players.join(', '),
                             });
                         }
                     });

@@ -31,6 +31,7 @@ def mock_llm():
 def mock_page():
     page = AsyncMock()
     page.close = AsyncMock()
+    page.evaluate = AsyncMock(return_value="")
     return page
 
 
