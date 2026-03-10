@@ -9,15 +9,7 @@ Comes with a web dashboard to monitor games, view move history with screenshots,
 - **International Draughts** (10x10 checkers)
 - **El Grande**
 
-Adding a new game:
-
-1. Create a plugin class in `bot/games/` that inherits from `GamePlugin` (see `bot/games/base.py`)
-2. Implement the four required methods:
-   - `is_our_turn(page)` -- check if it's our turn via the DOM
-   - `extract_state(page)` -- scrape the full board state from `gameui.gamedatas`
-   - `build_prompt(state)` -- construct system + user prompts for the LLM
-   - `execute_move(page, llm_response)` -- parse the LLM's JSON and click in the browser
-3. Register it in `bot/games/__init__.py` by adding to `REGISTRY` with the BGA game slug as the key (the slug appears in BGA URLs, e.g. `checkers` from `/12/checkers?table=...`)
+Adding a new game: see [DEVELOPING_PLUGINS.md](DEVELOPING_PLUGINS.md) for the full workflow (collecting real HTML fixtures, writing tests first, then implementing the plugin).
 
 ## Supported LLM providers
 
