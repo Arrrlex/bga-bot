@@ -6,6 +6,13 @@
 - Active games: `GET /player/player/getGamesInProgress.html` (returns JSON with status/data fields)
 - Game page: `https://boardgamearena.com/{game_type}?table={table_id}`
 
+## Table Invitations
+
+- Invitations appear as `.bga-toast` toast notifications on any page (rendered by Svelte)
+- Toast contains: game link (`a[href*="table="]`), inviter name (`.playername`), "Join" button (`a.bga-button--blue`), "Decline" button (`a.bga-button--red`)
+- Clicking "Join" triggers: `POST /table/table/joingame.html` with body `table=<id>&lobbyType=kintsugi`
+- Trophy/notification overlay (`#splashedNotifications_overlay`) may block clicks and must be dismissed first
+
 ## DOM Selectors
 
 - Turn indicator: `#pagemaintitletext` contains "You must" or "your turn" when it's our turn

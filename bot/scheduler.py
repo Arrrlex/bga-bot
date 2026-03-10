@@ -21,6 +21,14 @@ async def run_tick(client: BGAClient, llm: LLMProvider, session: Session, data_d
     """Main loop: check all active games, play turns where it's our move."""
     logger.info("Starting tick")
 
+    # Accept any pending game invitations before checking active games
+    try:
+        accepted = await client.accept_pending_invitations()
+        if accepted:
+            logger.info("Accepted %d invitation(s): %s", len(accepted), accepted)
+    except Exception:
+        logger.exception("Failed to check/accept invitations")
+
     try:
         active_games = await client.get_active_games()
     except Exception:

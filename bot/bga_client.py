@@ -108,6 +108,79 @@ class BGAClient:
             json.dump(cookies, f)
         logger.info("Saved cookies to %s", self._cookies_path)
 
+    async def accept_pending_invitations(self) -> list[dict]:
+        """Accept any pending game invitations shown as toast notifications.
+
+        Returns list of dicts with keys: table_id, game_type, inviter.
+        Navigates to the player page, finds invitation toasts, and clicks Join.
+        """
+        page = await self._context.new_page()
+        accepted = []
+        try:
+            await page.goto(
+                "https://boardgamearena.com/player",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            await page.wait_for_timeout(5000)
+
+            # Dismiss trophy/notification overlay if present
+            await page.evaluate("""
+                () => {
+                    const el = document.getElementById('splashedNotifications_overlay');
+                    if (el) el.style.display = 'none';
+                }
+            """)
+
+            # Find all invitation toasts
+            toasts = await page.query_selector_all(".bga-toast")
+            logger.info("Found %d toast notification(s)", len(toasts))
+
+            for toast in toasts:
+                text = (await toast.text_content() or "").strip()
+                if "invitation" not in text.lower():
+                    continue
+
+                # Extract table info from the game link inside the toast
+                info = await toast.evaluate("""
+                    (el) => {
+                        const link = el.querySelector('a[href*="table="]');
+                        if (!link) return null;
+                        const href = link.href;
+                        const tableMatch = href.match(/[?&]table=([0-9]+)/);
+                        const gameMatch = href.match(/[?&]game=([a-z_]+)/);
+                        const inviter = el.querySelector('.playername')?.textContent?.trim() || '';
+                        return {
+                            table_id: tableMatch ? tableMatch[1] : null,
+                            game_type: gameMatch ? gameMatch[1] : null,
+                            inviter: inviter,
+                        };
+                    }
+                """)
+                if not info or not info.get("table_id"):
+                    continue
+
+                # Click the Join button
+                join_btn = await toast.query_selector("a.bga-button--blue")
+                if not join_btn:
+                    logger.warning("No Join button in invitation toast for table %s", info["table_id"])
+                    continue
+
+                logger.info(
+                    "Accepting invitation: table=%s game=%s from=%s",
+                    info["table_id"], info["game_type"], info["inviter"],
+                )
+                await join_btn.click(force=True)
+                await page.wait_for_timeout(3000)
+                accepted.append(info)
+
+        except Exception:
+            logger.exception("Error accepting invitations")
+        finally:
+            await page.close()
+
+        return accepted
+
     async def get_active_games(self) -> list[dict]:
         """Fetch list of active games from BGA.
 
