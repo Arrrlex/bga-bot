@@ -13,6 +13,11 @@ def notify_tick() -> None:
     _event.set()
 
 
+def get_tick_count() -> int:
+    """Return the current tick count (for initializing SSE streams)."""
+    return _tick_count
+
+
 async def wait_for_tick(last_seen: int) -> int:
     """Block until a new tick fires. Returns the new tick count."""
     while _tick_count <= last_seen:

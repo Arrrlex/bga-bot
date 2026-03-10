@@ -167,7 +167,8 @@ def create_app(engine=None) -> FastAPI:
         _user: str = Depends(verify_password),
     ):
         async def generate():
-            last_seen = 0
+            from frontend.tick_event import get_tick_count
+            last_seen = get_tick_count()
             while True:
                 last_seen = await wait_for_tick(last_seen)
                 yield {"event": "tick", "data": str(last_seen)}
