@@ -51,11 +51,34 @@ class CheckersPlugin(GamePlugin):
                 const destsByPiece = gs.args?.destinations_by_piece || {};
                 for (const [pieceId, dests] of Object.entries(destsByPiece)) {
                     moves[pieceId] = dests.map(d => ({
-                        dest_x: d.dest_x,
-                        dest_y: d.dest_y,
+                        dest_x: d.dest_x !== undefined ? d.dest_x : d.x,
+                        dest_y: d.dest_y !== undefined ? d.dest_y : d.y,
                         captures: (d.jumped_over || []).length > 0,
                         successive: d.successive_cells || [],
                     }));
+                }
+                // Also check possible_destinations (used during multi-jump continuations)
+                if (Object.keys(moves).length === 0 && gs.args?.possible_destinations) {
+                    const pd = gs.args.possible_destinations;
+                    // possible_destinations may be an array of {x, y} or keyed by piece
+                    if (Array.isArray(pd)) {
+                        moves['_active'] = pd.map(d => ({
+                            dest_x: d.dest_x !== undefined ? d.dest_x : d.x,
+                            dest_y: d.dest_y !== undefined ? d.dest_y : d.y,
+                            captures: true,
+                            successive: [],
+                        }));
+                    } else {
+                        for (const [k, v] of Object.entries(pd)) {
+                            const dests = Array.isArray(v) ? v : [v];
+                            moves[k] = dests.map(d => ({
+                                dest_x: d.dest_x !== undefined ? d.dest_x : d.x,
+                                dest_y: d.dest_y !== undefined ? d.dest_y : d.y,
+                                captures: true,
+                                successive: [],
+                            }));
+                        }
+                    }
                 }
 
                 // Player info
@@ -179,27 +202,46 @@ Pick your move. Respond with ONLY the JSON object."""
             await page.click(f"#{cell_id}", force=True)
             await page.wait_for_timeout(1000)
 
-            # Check if there's a successive jump needed
-            title = await page.evaluate(
-                "() => document.querySelector('#pagemaintitletext')?.textContent?.trim() || ''"
-            )
-            if "must continue" in title.lower() or "must jump" in title.lower():
-                logger.info("Multi-jump detected, checking for successive moves")
-                # Get new valid destinations for the continuation
+            # Handle multi-jump chains: keep jumping until the chain is complete
+            for jump_num in range(20):  # safety limit
+                await page.wait_for_timeout(500)
+                title = await page.evaluate(
+                    "() => document.querySelector('#pagemaintitletext')?.textContent?.trim() || ''"
+                )
+                if not ("must continue" in title.lower() or "must jump" in title.lower()
+                        or "must move again" in title.lower()):
+                    break
+
+                logger.info("Multi-jump continuation #%d detected", jump_num + 1)
                 succ = await page.evaluate("""
                     () => {
                         const gs = gameui.gamedatas.gamestate;
                         const dests = gs.args?.destinations_by_piece || {};
+                        // Also check for possible_destinations (alternative BGA format)
+                        if (Object.keys(dests).length === 0 && gs.args?.possible_destinations) {
+                            return {'_continuation': gs.args.possible_destinations};
+                        }
                         return dests;
                     }
                 """)
-                if succ:
-                    # Take the first available successive jump
-                    for pid, moves in succ.items():
-                        if moves:
-                            m = moves[0]
-                            await page.click(f"#cell_{m['dest_x']}_{m['dest_y']}", force=True)
+                if not succ:
+                    logger.warning("No successive destinations found, breaking")
+                    break
+
+                jumped = False
+                for pid, moves in succ.items():
+                    if moves and isinstance(moves, list) and len(moves) > 0:
+                        m = moves[0]
+                        dx = m.get('dest_x', m.get('x'))
+                        dy = m.get('dest_y', m.get('y'))
+                        if dx is not None and dy is not None:
+                            await page.click(f"#cell_{dx}_{dy}", force=True)
                             await page.wait_for_timeout(800)
+                            jumped = True
+                            break
+                if not jumped:
+                    logger.warning("Could not find a valid continuation move")
+                    break
 
             desc = f"piece_{piece_id} ({dest_x},{dest_y})"
             return MoveResult(move_description=desc, success=True)

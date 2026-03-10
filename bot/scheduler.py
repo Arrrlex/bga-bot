@@ -18,6 +18,86 @@ def _timestamp() -> str:
     return str(int(time.time()))
 
 
+async def _handle_continuation(page) -> "MoveResult":
+    """Handle a multi-jump continuation by clicking available destination cells directly."""
+    from .games.base import MoveResult
+
+    try:
+        # Try to find highlighted/selectable destination cells on the board
+        clicked = await page.evaluate("""
+            () => {
+                // Look for highlighted cells (BGA marks valid destinations)
+                const selectors = [
+                    '.possibleMoveMarker',
+                    '.possibleMove',
+                    '[class*="possible"]',
+                    '.destination',
+                    '.selectable_cell',
+                ];
+                for (const sel of selectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        el.click();
+                        return 'clicked: ' + sel;
+                    }
+                }
+
+                // Try gamestate args for any destination data
+                try {
+                    const gs = gameui.gamedatas.gamestate;
+                    const args = gs.args || {};
+                    // Check various possible field names
+                    const candidates = [
+                        args.possible_destinations,
+                        args.destinations_by_piece,
+                        args.destinations,
+                        args.possibleMoves,
+                    ];
+                    for (const c of candidates) {
+                        if (!c) continue;
+                        let dests = c;
+                        if (!Array.isArray(dests)) {
+                            // It's an object keyed by piece id
+                            dests = Object.values(dests).flat();
+                        }
+                        if (dests.length > 0) {
+                            const d = dests[0];
+                            const x = d.dest_x !== undefined ? d.dest_x : d.x;
+                            const y = d.dest_y !== undefined ? d.dest_y : d.y;
+                            if (x !== undefined && y !== undefined) {
+                                const cell = document.getElementById('cell_' + x + '_' + y);
+                                if (cell) {
+                                    cell.click();
+                                    return 'clicked cell_' + x + '_' + y;
+                                }
+                            }
+                        }
+                    }
+                } catch(e) {}
+                return null;
+            }
+        """)
+
+        if clicked:
+            await page.wait_for_timeout(1000)
+            return MoveResult(
+                move_description=f"Multi-jump continuation: {clicked}",
+                success=True,
+            )
+        else:
+            return MoveResult(
+                move_description="Multi-jump continuation failed",
+                success=False,
+                error="Could not find any valid continuation destination on the board",
+            )
+    except Exception as e:
+        return MoveResult(
+            move_description="Multi-jump continuation failed",
+            success=False,
+            error=str(e),
+        )
+
+
 async def run_tick(client: BGAClient, llm: LLMProvider, session: Session, data_dir: str = "/data"):
     """Main loop: check all active games, play turns where it's our move."""
     logger.info("Starting tick")
@@ -75,13 +155,25 @@ async def run_tick(client: BGAClient, llm: LLMProvider, session: Session, data_d
                     continue
 
                 state = await plugin.extract_state(page)
-                system_prompt, user_prompt = plugin.build_prompt(state)
 
+                # If we're in a multi-jump continuation with no valid moves for the
+                # LLM to choose from, handle it directly without calling the LLM
+                title = state.raw.get("title", "").lower()
+                valid_moves = state.raw.get("valid_moves", {})
+                is_continuation = "must move again" in title or "must continue" in title or "must jump" in title
                 screenshot_path = f"screenshots/{game_id}_{_timestamp()}.png"
                 await client.capture_screenshot(page, f"{data_dir}/{screenshot_path}")
 
-                llm_response = await llm.complete(system_prompt, user_prompt)
-                result = await plugin.execute_move(page, llm_response)
+                if is_continuation and not valid_moves:
+                    logger.info("Game %s: mid-chain continuation with no parsed moves, attempting direct resolution", game_id)
+                    cont_result = await _handle_continuation(page)
+                    result = cont_result
+                    llm_response = "(skipped: multi-jump continuation)"
+                    system_prompt, user_prompt = "", ""
+                else:
+                    system_prompt, user_prompt = plugin.build_prompt(state)
+                    llm_response = await llm.complete(system_prompt, user_prompt)
+                    result = await plugin.execute_move(page, llm_response)
 
                 record_move(
                     session,

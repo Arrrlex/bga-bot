@@ -112,11 +112,13 @@ class TestExecuteMove:
         page = AsyncMock()
         page.click = AsyncMock()
         page.wait_for_timeout = AsyncMock()
-        # First evaluate returns "must continue", second returns successive moves
+        # Loop iteration 1: title says continue, destinations returned, then
+        # loop iteration 2: title says waiting (no more jumps)
         page.evaluate = AsyncMock(
             side_effect=[
-                "You must continue jumping",
-                {"1": [{"dest_x": 5, "dest_y": 4}]},
+                "You must continue jumping",  # title check (loop iter 1)
+                {"1": [{"dest_x": 5, "dest_y": 4}]},  # destinations
+                "Waiting for opponent",  # title check (loop iter 2) → break
             ]
         )
 
