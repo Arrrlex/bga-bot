@@ -1,5 +1,7 @@
+import glob
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -96,6 +98,19 @@ async def _handle_continuation(page) -> "MoveResult":
             success=False,
             error=str(e),
         )
+
+
+def _cleanup_screenshots(game_id: str, data_dir: str = "/data"):
+    """Delete screenshot files for a finished game."""
+    pattern = os.path.join(data_dir, "screenshots", f"{game_id}_*.png")
+    files = glob.glob(pattern)
+    for f in files:
+        try:
+            os.remove(f)
+        except OSError:
+            logger.warning("Failed to delete screenshot: %s", f)
+    if files:
+        logger.info("Cleaned up %d screenshot(s) for finished game %s", len(files), game_id)
 
 
 async def run_tick(client: BGAClient, llm: LLMProvider, session: Session, data_dir: str = "/data"):
@@ -227,10 +242,12 @@ async def run_tick(client: BGAClient, llm: LLMProvider, session: Session, data_d
                     db_game.players = result["players"]
                 session.commit()
                 logger.info("Game %s finished, winner: %s", db_game.id, db_game.winner or "unknown")
+                _cleanup_screenshots(db_game.id, data_dir)
             except Exception:
                 logger.exception("Failed to get result for game %s", db_game.id)
                 db_game.status = "finished"
                 session.commit()
+                _cleanup_screenshots(db_game.id, data_dir)
 
     logger.info("Tick complete")
     notify_tick()

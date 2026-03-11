@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,7 +8,7 @@ from sqlmodel import Session
 
 from bot.db import Game, Move, get_moves_for_game, upsert_game
 from bot.games.base import GameState, MoveResult
-from bot.scheduler import run_tick
+from bot.scheduler import _cleanup_screenshots, run_tick
 
 
 @pytest.fixture
@@ -269,3 +270,40 @@ async def test_invitation_failure_does_not_block_tick(mock_client, mock_llm, ses
 
     await run_tick(mock_client, mock_llm, session, str(tmp_path))
     mock_client.get_active_games.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_finished_game_screenshots_deleted(mock_client, mock_llm, session, tmp_path):
+    """Screenshots for a game should be deleted when it's detected as finished."""
+    # Pre-create a game that was previously active
+    game = Game(
+        id="999",
+        game_type="checkers",
+        bga_url="https://bga.com/checkers?table=999",
+        status="active",
+    )
+    session.add(game)
+    session.commit()
+
+    # Create some screenshot files for this game
+    screenshots_dir = tmp_path / "screenshots"
+    screenshots_dir.mkdir(exist_ok=True)
+    for ts in ["100", "200", "300"]:
+        (screenshots_dir / f"999_{ts}.png").write_bytes(b"fake png")
+    # Also create a screenshot for a different game that should NOT be deleted
+    (screenshots_dir / f"888_100.png").write_bytes(b"other game")
+
+    # Return no active games so game 999 is detected as finished
+    mock_client.get_active_games.return_value = []
+    mock_client.get_game_result = AsyncMock(return_value={"winner": "bob"})
+
+    await run_tick(mock_client, mock_llm, session, str(tmp_path))
+
+    # Game 999 screenshots should be gone
+    remaining = list(screenshots_dir.iterdir())
+    assert len(remaining) == 1
+    assert remaining[0].name == "888_100.png"
+
+    # Game should be marked finished
+    session.refresh(game)
+    assert game.status == "finished"
