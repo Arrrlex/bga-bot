@@ -8,7 +8,7 @@ from sqlmodel import Session
 
 from bot.db import Game, Move, get_moves_for_game, upsert_game
 from bot.games.base import GameState, MoveResult
-from bot.scheduler import _cleanup_screenshots, run_tick
+from bot.scheduler import _cleanup_screenshots, cleanup_finished_game_screenshots, run_tick
 
 
 @pytest.fixture
@@ -307,3 +307,23 @@ async def test_finished_game_screenshots_deleted(mock_client, mock_llm, session,
     # Game should be marked finished
     session.refresh(game)
     assert game.status == "finished"
+
+
+def test_startup_cleanup_deletes_finished_game_screenshots(session, tmp_path):
+    """Startup cleanup should delete screenshots for all already-finished games."""
+    screenshots_dir = tmp_path / "screenshots"
+    screenshots_dir.mkdir(exist_ok=True)
+
+    # One finished game, one active game
+    session.add(Game(id="111", game_type="checkers", bga_url="u", status="finished"))
+    session.add(Game(id="222", game_type="checkers", bga_url="u", status="active"))
+    session.commit()
+
+    (screenshots_dir / "111_100.png").write_bytes(b"x")
+    (screenshots_dir / "111_200.png").write_bytes(b"x")
+    (screenshots_dir / "222_100.png").write_bytes(b"x")
+
+    cleanup_finished_game_screenshots(session, str(tmp_path))
+
+    remaining = sorted(f.name for f in screenshots_dir.iterdir())
+    assert remaining == ["222_100.png"]

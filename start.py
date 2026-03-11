@@ -22,7 +22,7 @@ install_log_buffer()
 from bot.bga_client import BGAClient
 from bot.db import get_engine, get_session
 from bot.llm import get_provider
-from bot.scheduler import run_tick
+from bot.scheduler import cleanup_finished_game_screenshots, run_tick
 from frontend.app import create_app
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -38,6 +38,10 @@ async def main():
     engine = get_engine()
     llm = get_provider()
     client = BGAClient()
+
+    startup_session = get_session(engine)
+    cleanup_finished_game_screenshots(startup_session, data_dir)
+    startup_session.close()
 
     logger.info("Starting BGA client...")
     await client.start()

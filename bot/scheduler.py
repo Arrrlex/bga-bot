@@ -100,6 +100,13 @@ async def _handle_continuation(page) -> "MoveResult":
         )
 
 
+def cleanup_finished_game_screenshots(session: Session, data_dir: str = "/data"):
+    """Delete screenshots for all games already marked as finished. Run at startup."""
+    finished_games = [g for g in get_all_games(session) if g.status == "finished"]
+    for game in finished_games:
+        _cleanup_screenshots(game.id, data_dir)
+
+
 def _cleanup_screenshots(game_id: str, data_dir: str = "/data"):
     """Delete screenshot files for a finished game."""
     pattern = os.path.join(data_dir, "screenshots", f"{game_id}_*.png")
