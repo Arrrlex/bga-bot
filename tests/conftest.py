@@ -80,5 +80,6 @@ def mock_game_info():
 def set_env(tmp_path, monkeypatch):
     """Set required env vars for tests."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "testpass")
+    monkeypatch.setenv("AUTH_SECRET", "test-secret")
+    monkeypatch.setenv("AUTH_EMAIL", "test@example.com")
     os.makedirs(tmp_path / "screenshots", exist_ok=True)
